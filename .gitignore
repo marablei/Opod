@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.env
+.env
+runs/
+*.log
+.DS_Store
+
+# never push data, secrets or model outputs
+A1A30Agents/
+INPUT/*
+!INPUT/README.md
+OUTPUT/*
+!OUTPUT/README.md
+orion.env
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav

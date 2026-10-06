@@ -1,0 +1,374 @@
+"""
+Stage C — Qwen3-Omni reasoning client.
+
+Two modes, controlled by env var ORION_OMNI_MODE (default "fake"):
+  - "fake": no network call, no ffmpeg, no video file required at all.
+    Returns deterministic, schema-valid placeholder JSON. Lets the whole
+    pipeline (C -> D -> E -> F -> G) be tested on a laptop at zero GPU cost.
+  - "live": real requests to ORION_OMNI_ENDPOINT (vLLM OpenAI-compatible
+    /v1/chat/completions) with the actual video + audio attached.
+
+The LLM gets BOTH the agent-evidence text AND the real media, every call:
+  - Director/Footage (per chunk): a short ffmpeg clip of that chunk (video
+    track only, downscaled) PLUS that chunk's audio as a separate 16 kHz wav.
+    Audio is sent separately because vLLM's server doesn't support
+    use_audio_in_video; without this the model would never actually hear the
+    music/SFX the Director is supposed to reason about.
+  - Style/Story Architect (per video): N evenly-sampled frames.
+
+RESUME / DURABILITY (live mode only):
+  Every finished model call is written to 03_omni_raw/_cache_live/<key>.json
+  immediately. If the GPU dies mid-stage, the next run (on any pod, after the
+  output folder is pulled back from Drive) skips every call already cached
+  and continues from the first missing one. CHECKPOINT_HOOK (set by the
+  orchestrator) pushes the cache to Drive every ~90s. Fake mode never caches,
+  so fake placeholders can never be reused by a later live run.
+
+UNVERIFIED until the 1-video GPU test: the exact multimodal payload shape
+Qwen3-Omni's vLLM server accepts. We use the documented OpenAI-style parts
+(video_url / audio_url / image_url as base64 data URLs). `deploy/smoke_test.py`
+sends exactly this payload to the live server with a synthetic clip — run it
+(setup_runpod.sh does) BEFORE launching a real batch.
+"""
+import base64
+import json
+import os
+import re
+import subprocess
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from omni_client.prompts import (
+    build_director_prompt, build_footage_prompt,
+    build_style_prompt, build_story_architect_prompt,
+)
+
+MODE = os.environ.get("ORION_OMNI_MODE", "fake")
+ENDPOINT = os.environ.get("ORION_OMNI_ENDPOINT", "http://127.0.0.1:8901/v1/chat/completions")
+MODEL_NAME = os.environ.get("ORION_OMNI_MODEL", "qwen3-omni-30b-a3b-instruct")
+TIMEOUT_SEC = int(os.environ.get("ORION_OMNI_TIMEOUT", "600"))
+MAX_TOKENS = int(os.environ.get("ORION_OMNI_MAX_TOKENS", "2048"))
+TEMPERATURE = float(os.environ.get("ORION_OMNI_TEMPERATURE", "0.2"))
+JSON_MODE = os.environ.get("ORION_OMNI_JSON_MODE", "1") == "1"
+SEND_MODALITIES = os.environ.get("ORION_OMNI_SEND_MODALITIES", "0") == "1"  # only for the vllm-omni server
+MAX_RETRIES = int(os.environ.get("ORION_OMNI_RETRIES", "3"))
+
+# Keep video tokens bounded so a 75 s chunk fits in a 32k context.
+# Rough budget (unverified): ~75 s * 2 fps at 360p is on the order of 15-20k tokens.
+CLIP_FPS = float(os.environ.get("ORION_CLIP_FPS", "2"))
+CLIP_HEIGHT = int(os.environ.get("ORION_CLIP_HEIGHT", "360"))
+FRAME_HEIGHT = int(os.environ.get("ORION_FRAME_HEIGHT", "480"))
+STYLE_STORY_FRAME_COUNT = int(os.environ.get("ORION_STYLE_FRAMES", "8"))
+
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
+
+# Set by the orchestrator: called after cached calls so progress reaches Drive.
+CHECKPOINT_HOOK = None
+
+
+# --------------------------------------------------------------------- media
+def find_source_video(video_input_dir: Path) -> Path:
+    for p in sorted(video_input_dir.iterdir()):
+        if p.suffix.lower() in VIDEO_EXTENSIONS:
+            return p
+    raise FileNotFoundError(
+        f"No video file found in {video_input_dir} (looked for {VIDEO_EXTENSIONS}). "
+        f"Each INPUT/<video>/ folder must contain the video file alongside its P1_A01-A30.jsonl."
+    )
+
+
+def extract_clip(source_video: Path, start_sec: float, end_sec: float, out_path: Path):
+    """Video-only clip for one chunk's time range, downscaled + fps-capped.
+    Re-encodes (not stream-copy) so the cut lands exactly on start/end."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    duration = max(0.1, end_sec - start_sec)
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(start_sec), "-i", str(source_video), "-t", str(duration),
+        "-an", "-vf", f"fps={CLIP_FPS},scale=-2:{CLIP_HEIGHT}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
+        "-loglevel", "error", str(out_path),
+    ]
+    subprocess.run(cmd, check=True)
+
+
+def extract_audio(source_video: Path, start_sec: float, end_sec: float, out_path: Path) -> bool:
+    """16 kHz mono wav for the chunk. Returns False if the source has no audio."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    duration = max(0.1, end_sec - start_sec)
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(start_sec), "-i", str(source_video), "-t", str(duration),
+        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-loglevel", "error", str(out_path),
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+        return out_path.exists() and out_path.stat().st_size > 0
+    except subprocess.CalledProcessError:
+        return False
+
+
+def sample_frames(source_video: Path, n: int, out_dir: Path, duration_sec: float) -> list[Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frame_paths = []
+    for i in range(n):
+        t = (duration_sec * i) / max(1, n)
+        out_path = out_dir / f"frame_{i:02d}.jpg"
+        cmd = [
+            "ffmpeg", "-y", "-ss", str(t), "-i", str(source_video), "-frames:v", "1",
+            "-vf", f"scale=-2:{FRAME_HEIGHT}", "-q:v", "4", "-loglevel", "error", str(out_path),
+        ]
+        subprocess.run(cmd, check=True)
+        frame_paths.append(out_path)
+    return frame_paths
+
+
+def _b64_data_url(path: Path, mime: str) -> str:
+    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
+
+
+# ------------------------------------------------------------- model calls
+def _call_model(
+    system_prompt: str,
+    user_content: str,
+    video_clip_path: Path | None = None,
+    audio_path: Path | None = None,
+    frame_paths: list[Path] | None = None,
+) -> dict:
+    if MODE == "fake":
+        return _fake_response(system_prompt, user_content)
+    return _live_call(system_prompt, user_content, video_clip_path, audio_path, frame_paths)
+
+
+def _fake_response(system_prompt: str, user_content: str) -> dict:
+    """Deterministic placeholders in each schema's real shape. Every one
+    carries the literal 'FAKE_placeholder' marker, which Stage F rejects."""
+    if "documentary editor" in system_prompt:  # Director
+        return {
+            "editorial_function": "FAKE_placeholder",
+            "treatment": "direct_broll",
+            "footage_need": {"query": "FAKE_placeholder", "duration_sec": 0},
+            "audio_need": {"query": "FAKE_placeholder", "duration_sec": 0, "type": "music"},
+            "reasoning": "FAKE: no model call made (ORION_OMNI_MODE=fake)",
+        }
+    if "footage researcher" in system_prompt:  # Footage
+        return {
+            "decision": "FAKE_placeholder",
+            "confirmed_asset_ids": [],
+            "rejected_asset_ids": [],
+            "reasoning": "FAKE: no model call made (ORION_OMNI_MODE=fake)",
+        }
+    if "style analyst" in system_prompt:  # Style
+        return {
+            "pacing_target": "FAKE_placeholder",
+            "typography_system": "FAKE_placeholder",
+            "color_lut": "FAKE_placeholder",
+            "graphic_density": "FAKE_placeholder",
+            "sound_design_intensity": "FAKE_placeholder",
+            "map_motion_frequency": "FAKE_placeholder",
+        }
+    if "story architect" in system_prompt:  # Story Architect
+        return {
+            "act_1_hook": {"segment_id": "FAKE", "function": "FAKE_placeholder", "note": "FAKE"},
+            "act_1_anchor": {"segment_id": "FAKE", "function": "FAKE_placeholder", "note": "FAKE"},
+            "act_2_escalation": [],
+            "act_3_payoff": {"segment_id": "FAKE", "function": "FAKE_placeholder", "note": "FAKE"},
+            "act_3_closing": {"segment_id": "FAKE", "function": "FAKE_placeholder", "note": "FAKE"},
+        }
+    raise ValueError("Unrecognized prompt type for fake mode")
+
+
+def _parse_json_loose(text: str) -> dict:
+    """Models sometimes wrap JSON in ```json fences or add a sentence around it."""
+    t = (text or "").strip()
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.IGNORECASE)
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", t, flags=re.DOTALL)
+        if m:
+            return json.loads(m.group(0))
+        raise
+
+
+def build_payload(
+    system_prompt: str,
+    user_content: str,
+    video_clip_path: Path | None,
+    audio_path: Path | None,
+    frame_paths: list[Path] | None,
+) -> dict:
+    parts = []
+    if video_clip_path is not None:
+        parts.append({"type": "video_url", "video_url": {"url": _b64_data_url(video_clip_path, "video/mp4")}})
+    if audio_path is not None:
+        parts.append({"type": "audio_url", "audio_url": {"url": _b64_data_url(audio_path, "audio/wav")}})
+    for fp in frame_paths or []:
+        parts.append({"type": "image_url", "image_url": {"url": _b64_data_url(fp, "image/jpeg")}})
+    parts.append({"type": "text", "text": user_content})  # text last, as in the model card examples
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": parts},
+        ],
+        "max_tokens": MAX_TOKENS,
+        "temperature": TEMPERATURE,
+    }
+    if JSON_MODE:
+        payload["response_format"] = {"type": "json_object"}
+    if SEND_MODALITIES:
+        payload["modalities"] = ["text"]
+    return payload
+
+
+def _live_call(system_prompt, user_content, video_clip_path, audio_path, frame_paths) -> dict:
+    payload = build_payload(system_prompt, user_content, video_clip_path, audio_path, frame_paths)
+    data = json.dumps(payload).encode()
+    last_err = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            req = urllib.request.Request(ENDPOINT, data=data, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as resp:
+                body = json.loads(resp.read())
+            content = body["choices"][0]["message"]["content"]
+            return _parse_json_loose(content)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:500]
+            last_err = f"HTTP {e.code}: {detail}"
+            if e.code in (400, 422):
+                break  # request itself is wrong; retrying won't help
+        except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError, KeyError) as e:
+            last_err = f"{type(e).__name__}: {e}"
+        if attempt < MAX_RETRIES:
+            time.sleep(5 * attempt)
+    raise RuntimeError(f"Qwen3-Omni call failed after {MAX_RETRIES} tries: {last_err}")
+
+
+# --------------------------------------------------------------- checkpointing
+class _Cache:
+    """One json file per finished model call. Live mode only."""
+
+    def __init__(self, directory: Path, enabled: bool):
+        self.dir = directory
+        self.enabled = enabled
+        if enabled:
+            directory.mkdir(parents=True, exist_ok=True)
+
+    def get(self, key: str):
+        if not self.enabled:
+            return None
+        p = self.dir / f"{key}.json"
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except json.JSONDecodeError:
+                return None  # half-written file from a crash: just redo that call
+        return None
+
+    def put(self, key: str, value: dict):
+        if not self.enabled:
+            return
+        tmp = self.dir / f"{key}.json.tmp"
+        tmp.write_text(json.dumps(value))
+        tmp.replace(self.dir / f"{key}.json")  # atomic: never leaves a torn file
+        if CHECKPOINT_HOOK is not None:
+            try:
+                CHECKPOINT_HOOK()
+            except Exception as e:  # sync trouble must never kill the run
+                print(f"[stage_c] checkpoint hook failed: {e}")
+
+
+def run(video_input_dir: Path, video_out_dir: Path):
+    chunks_dir = video_out_dir / "02_chunks"
+    if not chunks_dir.exists():
+        raise FileNotFoundError(f"Stage B output not found: {chunks_dir}. Run Stage B first.")
+
+    segment_chunks = json.loads((chunks_dir / "segment_chunks.json").read_text())
+    style_rollup = json.loads((chunks_dir / "style_rollup.json").read_text())
+    story_input = json.loads((chunks_dir / "story_input.json").read_text())
+
+    out_dir = video_out_dir / "03_omni_raw"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    live = MODE == "live"
+    cache = _Cache(out_dir / "_cache_live", enabled=live)
+    cache_hits = 0
+
+    source_video = find_source_video(video_input_dir) if live else None
+    clips_dir = out_dir / "_clips"
+    frames_dir = out_dir / "_frames"
+    duration_sec = style_rollup.get("duration_sec") or story_input.get("duration_sec")
+
+    # Director + Footage: one call each per chunk, same clip+audio for both.
+    director_results, footage_results = [], []
+    for chunk in segment_chunks:
+        cid = chunk["chunk_id"]
+        media = {}
+
+        def get_media():
+            """Extract this chunk's clip+audio once, only if a call actually needs it."""
+            if not media:
+                clip = clips_dir / f"{cid}.mp4"
+                wav = clips_dir / f"{cid}.wav"
+                extract_clip(source_video, chunk["start_sec"], chunk["end_sec"], clip)
+                media["clip"] = clip
+                media["audio"] = wav if extract_audio(source_video, chunk["start_sec"], chunk["end_sec"], wav) else None
+            return media["clip"], media["audio"]
+
+        for label, builder, bucket in (
+            ("director", build_director_prompt, director_results),
+            ("footage", build_footage_prompt, footage_results),
+        ):
+            key = f"{label}__{cid}"
+            result = cache.get(key)
+            if result is not None:
+                cache_hits += 1
+            else:
+                clip, audio = get_media() if live else (None, None)
+                sys_p, user_p = builder(chunk)
+                result = _call_model(sys_p, user_p, video_clip_path=clip, audio_path=audio)
+                result["chunk_id"] = cid
+                cache.put(key, result)
+            bucket.append(result)
+
+    # Style + Story Architect: one call each, sampled frames of the whole video.
+    frames: list[Path] = []
+
+    def get_frames():
+        if live and not frames:
+            frames.extend(sample_frames(source_video, STYLE_STORY_FRAME_COUNT, frames_dir, duration_sec))
+        return frames
+
+    style_result = cache.get("style")
+    if style_result is None:
+        sys_p, user_p = build_style_prompt(style_rollup)
+        style_result = _call_model(sys_p, user_p, frame_paths=get_frames() or None)
+        style_result["video_id"] = style_rollup["video_id"]
+        cache.put("style", style_result)
+    else:
+        cache_hits += 1
+
+    story_result = cache.get("story")
+    if story_result is None:
+        sys_p, user_p = build_story_architect_prompt(story_input)
+        story_result = _call_model(sys_p, user_p, frame_paths=get_frames() or None)
+        story_result["video_id"] = story_input["video_id"]
+        cache.put("story", story_result)
+    else:
+        cache_hits += 1
+
+    (out_dir / "director_raw.json").write_text(json.dumps(director_results, indent=2))
+    (out_dir / "footage_raw.json").write_text(json.dumps(footage_results, indent=2))
+    (out_dir / "style_raw.json").write_text(json.dumps(style_result, indent=2))
+    (out_dir / "story_architect_raw.json").write_text(json.dumps(story_result, indent=2))
+
+    return {
+        "mode": MODE,
+        "director_calls": len(director_results),
+        "footage_calls": len(footage_results),
+        "style_calls": 1,
+        "story_calls": 1,
+        "clips_extracted": live,
+        "resumed_from_cache": cache_hits,
+    }
