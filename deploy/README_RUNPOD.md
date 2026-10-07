@@ -117,3 +117,17 @@ stage, and inside Stage C continue from the first model call not yet saved.
   used to open your three folders is standard rclone syntax but was not run against real Drive.
   `drive_check.py` is your first real test.
 * The 10-30 min/video and the $/100-video figures remain estimates until the 1-video run.
+
+## Authorise once, inside the repo (no per-pod authorisation)
+
+Google sign-in itself needs a human once (browser consent, ~2 min). After that nothing is asked again.
+
+1. On your PC: `rclone authorize "drive"` (blank client ID) -> copy the token JSON.
+2. Copy `deploy/orion.env.example` to `deploy/orion.private.env`, paste the token. (Plain file is git-ignored.)
+3. `bash deploy/make_private_env.sh` -> creates `deploy/orion.private.env.enc` (AES-256, passphrase you choose).
+4. Commit the `.enc` file to your PRIVATE repo. Delete nothing else; never commit the plain file.
+5. On the pod: set ONE RunPod template env var `ORION_SECRET_PASSPHRASE`, then
+   `git clone <repo> && bash Orion_Pipeline/go.sh --limit 1`. Folder IDs + token load automatically.
+
+Risk: the token reaches your whole Drive. Encryption protects it only as well as the passphrase; if leaked,
+revoke at https://myaccount.google.com/permissions and redo step 1.

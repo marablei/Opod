@@ -10,6 +10,26 @@ if [ -f "$ENV_FILE" ]; then
   set -a; source "$ENV_FILE"; set +a
 fi
 
+# Optional: settings that travel WITH the repo, so a fresh clone needs no manual authorisation step.
+#   deploy/orion.private.env       plain text (git-ignored by default; add with `git add -f` only if you accept the risk)
+#   deploy/orion.private.env.enc   encrypted copy (safe to commit); needs ORION_SECRET_PASSPHRASE on the pod
+# See deploy/README_RUNPOD.md "Authorise once, inside the repo".
+_PRIV="$REPO_DIR/deploy/orion.private.env"
+if [ -f "$_PRIV" ]; then set -a; source "$_PRIV"; set +a; fi
+if [ -f "$_PRIV.enc" ]; then
+  if [ -z "${ORION_SECRET_PASSPHRASE:-}" ]; then
+    echo "[orion] found deploy/orion.private.env.enc but ORION_SECRET_PASSPHRASE is not set - not decrypting." >&2
+  else
+    _T="$(mktemp)"
+    if openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ORION_SECRET_PASSPHRASE -in "$_PRIV.enc" -out "$_T" 2>/dev/null; then
+      set -a; source "$_T"; set +a
+    else
+      echo "[orion] could not decrypt deploy/orion.private.env.enc (wrong ORION_SECRET_PASSPHRASE?)" >&2
+    fi
+    rm -f "$_T"
+  fi
+fi
+
 VENV="${ORION_VENV:-$WORKSPACE/venv}"
 PY="$VENV/bin/python"
 export HF_HOME="${HF_HOME:-$WORKSPACE/hf_cache}"       # model weights live on the persistent volume
