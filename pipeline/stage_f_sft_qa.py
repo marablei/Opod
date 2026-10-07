@@ -29,8 +29,7 @@ FAKE_MARKER = "FAKE_placeholder"
 # A Footage row whose prompt shows an EMPTY candidate pool can only ever be answered
 # "reject the pool" — there is nothing to confirm. Training the Footage adapter on
 # those rows teaches it to reject everything. Until the Python retrieval step supplies
-# real candidates, these rows are held back (logged, never deleted: the .pre_qa file
-# keeps them). Set ORION_ALLOW_EMPTY_CANDIDATES=1 to keep them anyway.
+# real candidates, these rows are held back (logged, never deleted: they stay in stage_e_sft/). Set ORION_ALLOW_EMPTY_CANDIDATES=1 to keep them anyway.
 ALLOW_EMPTY_CANDIDATES = os.environ.get("ORION_ALLOW_EMPTY_CANDIDATES", "0") == "1"
 EMPTY_POOL_MARKER = "retrieved_candidates: []"
 
@@ -96,29 +95,25 @@ def _gate_shard(in_path: Path, out_path: Path, log_path: Path, shard_name: str) 
 
 
 def run(video_input_dir: Path, video_out_dir: Path):
-    sft_dir = video_out_dir / "05_sft"
-    if not sft_dir.exists():
-        raise FileNotFoundError(f"Stage E output not found: {sft_dir}. Run Stage E first.")
+    """Reads stage_e_sft/ (never modified) and writes this video's FINAL, gated rows to stage_f_final/.
+    Stage G only ever reads stage_f_final/, so each finished video is a self-contained, final result
+    that can be re-aggregated later, even offline. Safe to re-run: it always gates from stage_e_sft/."""
+    in_dir = video_out_dir / "stage_e_sft"
+    if not in_dir.exists():
+        raise FileNotFoundError(f"Stage E output not found: {in_dir}. Run Stage E first.")
+    out_dir = video_out_dir / "stage_f_final"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path = sft_dir / "_qa_rejections.log"
+    log_path = out_dir / "_qa_rejections.log"
     # Never delete an earlier log: append a run header so every run stays visible.
     with open(log_path, "a") as _f:
         _f.write(f"\n=== Stage F run {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 
     results = {}
     for shard in ["director_sft", "footage_sft", "style_sft", "story_architect_sft"]:
-        in_path = sft_dir / f"{shard}.jsonl"
-        # Gate in place: QA output replaces the pre-QA shard. Pre-QA content
-        # is still visible in the rejection log for anyone debugging later.
-        tmp_path = sft_dir / f"{shard}.pre_qa.jsonl"
-        if tmp_path.exists():
-            # Re-run after an interrupted Stage F: the .pre_qa file is the untouched
-            # original; in_path may already be a gated copy. Always gate from the original.
-            results[shard] = _gate_shard(tmp_path, in_path, log_path, shard)
-        elif in_path.exists():
-            in_path.rename(tmp_path)
-            results[shard] = _gate_shard(tmp_path, in_path, log_path, shard)
-        else:
-            results[shard] = {"kept": 0, "total": 0}
-
+        results[shard] = _gate_shard(in_dir / f"{shard}.jsonl", out_dir / f"{shard}.jsonl", log_path, shard)
+        if not (in_dir / f"{shard}.jsonl").exists():
+            (out_dir / f"{shard}.jsonl").write_text("")  # keep the 4 files present for every finished video
+    (out_dir / "_qa_report.json").write_text(json.dumps(
+        {"finished_at": time.strftime("%Y-%m-%d %H:%M:%S"), "shards": results}, indent=2))
     return results

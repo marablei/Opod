@@ -1,17 +1,17 @@
 """
 Stage B — Chunking.
 
-Reads 01_unified_dna.json (Stage A's output) and produces THREE views,
+Reads stage_a_extract/unified_dna.json (Stage A's output) and produces THREE views,
 matching the architecture diagram exactly:
 
-  1. 02_chunks/segment_chunks.json  — chunks bounded by transcript pauses,
+  1. stage_b_chunks/segment_chunks.json  — chunks bounded by transcript pauses,
      each carrying every piece of evidence (shots, transcript, OCR,
      objects, asset_roles) that falls inside that chunk's time range.
      Feeds Director + Footage.
-  2. 02_chunks/style_rollup.json    — one whole-video aggregate (pacing,
+  2. stage_b_chunks/style_rollup.json    — one whole-video aggregate (pacing,
      motion, audio profile, style tags, counts). Feeds Style — one call
      per video, not per segment.
-  3. 02_chunks/story_input.json     — the full ordered transcript, no
+  3. stage_b_chunks/story_input.json     — the full ordered transcript, no
      chunking at all. Feeds Story Architect's whole-script reasoning.
 
 CHUNK BOUNDARY — corrected after checking real data:
@@ -112,12 +112,12 @@ def _enforce_max_duration(chunks: list[tuple[float, float, list[dict]]]) -> list
 
 
 def run(video_input_dir: Path, video_out_dir: Path):
-    dna_path = video_out_dir / "01_unified_dna.json"
+    dna_path = video_out_dir / "stage_a_extract" / "unified_dna.json"
     if not dna_path.exists():
         raise FileNotFoundError(f"Stage A output not found: {dna_path}. Run Stage A first.")
     dna = json.loads(dna_path.read_text())
 
-    chunks_dir = video_out_dir / "02_chunks"
+    chunks_dir = video_out_dir / "stage_b_chunks"
     chunks_dir.mkdir(parents=True, exist_ok=True)
 
     shots = dna.get("shots", [])

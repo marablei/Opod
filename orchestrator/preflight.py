@@ -57,7 +57,7 @@ def quality_report(video_out_dir: Path) -> dict:
     """Written to <video>/_data_quality.json after Stage A. Never raises."""
     report = {"warnings": []}
     try:
-        dna = json.loads((video_out_dir / "01_unified_dna.json").read_text())
+        dna = json.loads((video_out_dir / "stage_a_extract" / "unified_dna.json").read_text())
         duration = (dna.get("source") or {}).get("duration_sec") or 0.0
         transcript = dna.get("transcript", [])
         last_end = max((t.get("end_sec", 0.0) for t in transcript), default=0.0)

@@ -17,7 +17,7 @@ def run(run_dir: Path, video_ids: list[str]):
         with open(out_path, "w") as out_f:
             rows_written = 0
             for video_id in video_ids:
-                shard_path = run_dir / video_id / "05_sft" / name
+                shard_path = run_dir / video_id / "stage_f_final" / name
                 if not shard_path.exists():
                     continue  # video failed before Stage E, or had no rows for this LoRA
                 with open(shard_path) as in_f:

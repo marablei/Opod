@@ -9,7 +9,7 @@ in Stage C (via omni_client.prompts). The SYSTEM prompt stored is the text-only
 STUDENT one (no mention of a video), because the model being fine-tuned
 (Qwen3-30B-A3B) never sees the video; only the Omni teacher does.
 
-Writes 4 per-video shard files to 05_sft/ — these get concatenated across
+Writes 4 per-video shard files to stage_e_sft/ (before the QA gate; Stage F writes the final ones) — these get concatenated across
 all videos by Stage G at the end of the batch, not here.
 """
 import json
@@ -39,8 +39,8 @@ def _chat_example(system: str, user: str, assistant_obj: dict) -> dict:
 
 
 def run(video_input_dir: Path, video_out_dir: Path):
-    judge_dir = video_out_dir / "04_judge"
-    chunks_dir = video_out_dir / "02_chunks"
+    judge_dir = video_out_dir / "stage_d_judge"
+    chunks_dir = video_out_dir / "stage_b_chunks"
     if not judge_dir.exists():
         raise FileNotFoundError(f"Stage D output not found: {judge_dir}. Run Stage D first.")
 
@@ -53,7 +53,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
     style_validated = json.loads((judge_dir / "style_validated.json").read_text())
     story_validated = json.loads((judge_dir / "story_architect_validated.json").read_text())
 
-    out_dir = video_out_dir / "05_sft"
+    out_dir = video_out_dir / "stage_e_sft"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Director: one row per validated chunk ---

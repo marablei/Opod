@@ -13,38 +13,37 @@ OUTPUT/
   footage_sft.jsonl           <- FINAL, aggregated across all videos (Stage G)
   story_architect_sft.jsonl   <- FINAL, aggregated across all videos (Stage G)
 
-  video_001/                  <- one folder per video, every stage's raw output kept
-    _state.json                <- checkpoint: which stages are done (resume reads this)
-    _timing.json                <- how long each stage took, for this video
-    _errors.log                 <- any stage failure for this video, with traceback
-    _data_quality.json          <- transcript coverage / counts / warnings (written after Stage A)
-    00_self_extract.json        <- Stage A: video facts, shot cuts, Whisper transcript (cached; no agent files)
-    01_unified_dna.json         <- Stage A
-    02_chunks/                  <- Stage B
+  video_001/                  <- one folder per video
+    _state.json                <- bookkeeping: which stages are done (resume reads this)
+    _timing.json               <- bookkeeping: how long each stage took
+    _errors.log                <- bookkeeping: any stage failure, with traceback
+    _data_quality.json         <- bookkeeping: transcript coverage / counts / warnings
+    stage_a_extract/           <- Stage A: video -> facts
+      self_extract.json          ffprobe info, shot cuts, Whisper transcript (cached)
+      unified_dna.json
+    stage_b_chunks/            <- Stage B
       segment_chunks.json
       style_rollup.json
       story_input.json
-    03_omni_raw/                <- Stage C (fake or live, depending on ORION_OMNI_MODE)
-      _cache_live/               <- one file per finished model call: what makes a lost GPU resumable
+    stage_c_omni/              <- Stage C (Qwen3-Omni answers)
+      _cache_live/               one file per finished model call: what makes a lost GPU resumable
       director_raw.json
       footage_raw.json
       style_raw.json
       story_architect_raw.json
-    04_judge/                   <- Stage D
+    stage_d_judge/             <- Stage D
       director_validated.json
       footage_validated.json
       style_validated.json
       story_architect_validated.json
-      rejected_claims.log       <- exactly what got thrown out and why
-    05_sft/                     <- Stage E + F (pre_qa.jsonl kept alongside the gated version)
-      director_sft.jsonl
-      footage_sft.jsonl
-      style_sft.jsonl
-      story_architect_sft.jsonl
-      _qa_rejections.log
-
+      rejected_claims.log        exactly what got thrown out and why
+    stage_e_sft/               <- Stage E: training rows BEFORE the QA gate (never modified afterwards)
+      director_sft.jsonl  footage_sft.jsonl  style_sft.jsonl  story_architect_sft.jsonl
+    stage_f_final/             <- Stage F: this video's FINAL rows, after the QA gate. Stage G reads only this.
+      director_sft.jsonl  footage_sft.jsonl  style_sft.jsonl  story_architect_sft.jsonl
+      _qa_report.json  _qa_rejections.log
   video_002/
-    ... same structure
+    ...
 ```
 
 Every stage's output is kept on disk, per video — nothing is silently

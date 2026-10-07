@@ -3,7 +3,7 @@ Stage D — Semantic Judge (rule-based grounding check).
 
 For every claim in director_raw / footage_raw / story_architect_raw: is it
 traceable back to something that actually exists in this video's evidence
-(01_unified_dna.json, 02_chunks/*.json)? Unsupported claims are rejected,
+(stage_a_extract/unified_dna.json, stage_b_chunks/*.json)? Unsupported claims are rejected,
 not silently kept, and logged to _errors-style rejected_claims.log so you
 can see exactly what was thrown out and why.
 
@@ -135,8 +135,8 @@ def _validate_style(style: dict, expected_video_id: str, log_path: Path) -> dict
 
 
 def run(video_input_dir: Path, video_out_dir: Path):
-    raw_dir = video_out_dir / "03_omni_raw"
-    chunks_dir = video_out_dir / "02_chunks"
+    raw_dir = video_out_dir / "stage_c_omni"
+    chunks_dir = video_out_dir / "stage_b_chunks"
     if not raw_dir.exists():
         raise FileNotFoundError(f"Stage C output not found: {raw_dir}. Run Stage C first.")
 
@@ -146,7 +146,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
     valid_segment_ids = {t["id"] for t in story_input["transcript"]}
     video_id = story_input["video_id"]
 
-    out_dir = video_out_dir / "04_judge"
+    out_dir = video_out_dir / "stage_d_judge"
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "rejected_claims.log"
     # Never delete an earlier log: append a run header so every run stays visible.

@@ -2,7 +2,7 @@
 Self-extraction: everything the pipeline needs to know about a video, taken from
 the video file itself. No P1_A*.jsonl agent files involved.
 
-Produces (cached in <video_out>/00_self_extract.json so a resumed run never redoes it):
+Produces (cached in <video_out>/stage_a_extract/self_extract.json so a resumed run never redoes it):
   source      duration / fps / resolution / codecs            (ffprobe)
   shots       cut-to-cut shots                                 (ffmpeg scene filter)
   transcript  speech segments with timestamps + word times     (faster-whisper)
@@ -157,8 +157,8 @@ def _load_whisper(WhisperModel):
 
 def run(video_input_dir: Path, video_out_dir: Path) -> dict:
     """Returns {"source", "shots", "transcript", "pacing"}; cached on disk."""
-    video_out_dir.mkdir(parents=True, exist_ok=True)
-    cache = video_out_dir / "00_self_extract.json"
+    (video_out_dir / "stage_a_extract").mkdir(parents=True, exist_ok=True)
+    cache = video_out_dir / "stage_a_extract" / "self_extract.json"
     if cache.exists():
         try:
             data = json.loads(cache.read_text())

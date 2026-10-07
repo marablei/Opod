@@ -17,7 +17,7 @@ The LLM gets BOTH the agent-evidence text AND the real media, every call:
   - Style/Story Architect (per video): N evenly-sampled frames.
 
 RESUME / DURABILITY (live mode only):
-  Every finished model call is written to 03_omni_raw/_cache_live/<key>.json
+  Every finished model call is written to stage_c_omni/_cache_live/<key>.json
   immediately. If the GPU dies mid-stage, the next run (on any pod, after the
   output folder is pulled back from Drive) skips every call already cached
   and continues from the first missing one. CHECKPOINT_HOOK (set by the
@@ -281,7 +281,7 @@ class _Cache:
 
 
 def run(video_input_dir: Path, video_out_dir: Path):
-    chunks_dir = video_out_dir / "02_chunks"
+    chunks_dir = video_out_dir / "stage_b_chunks"
     if not chunks_dir.exists():
         raise FileNotFoundError(f"Stage B output not found: {chunks_dir}. Run Stage B first.")
 
@@ -289,7 +289,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
     style_rollup = json.loads((chunks_dir / "style_rollup.json").read_text())
     story_input = json.loads((chunks_dir / "story_input.json").read_text())
 
-    out_dir = video_out_dir / "03_omni_raw"
+    out_dir = video_out_dir / "stage_c_omni"
     out_dir.mkdir(parents=True, exist_ok=True)
     live = MODE == "live"
     cache = _Cache(out_dir / "_cache_live", enabled=live)

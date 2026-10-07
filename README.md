@@ -8,15 +8,16 @@ Everything is saved to Google Drive after every step, so a lost GPU can be repla
 
 ## Stages
 - **A** `pipeline/stage_a_unified_dna.py` + `pipeline/self_extract.py`: ffprobe (duration/fps/size),
-  ffmpeg shot cuts, faster-whisper transcript with timestamps -> `00_self_extract.json`, `01_unified_dna.json`
+  ffmpeg shot cuts, faster-whisper transcript with timestamps -> `stage_a_extract/`
 - **B** `stage_b_chunking.py`: chunks of up to 75 s, cut at speech pauses (fixed windows if no speech)
 - **C** `omni_client/stage_c_omni.py`: per chunk, video clip + audio + evidence text -> Qwen3-Omni
   (Director, Footage); sampled frames -> Style, Story. Every call is cached for resume.
 - **D** `stage_d_judge.py`: rule-based ID/structure checks only. It does NOT verify that claims are true.
 - **E** `stage_e_dataset_extractor.py`: builds SFT rows with the text-only student system prompt
 - **F** `stage_f_sft_qa.py`: rejects placeholders/malformed/duplicates; holds back Footage rows whose
-  candidate pool is empty (kept in `.pre_qa`, nothing deleted)
-- **G** `stage_g_aggregate.py`: joins all videos into 4 final `*_sft.jsonl` files
+  candidate pool is empty (still in `stage_e_sft/`, nothing deleted). Writes the video's FINAL rows to `stage_f_final/`.
+- **G** `stage_g_aggregate.py`: joins every video's `stage_f_final/` into 4 final `*_sft.jsonl` files.
+  Can be re-run offline, no GPU: `python orchestrator/aggregate_offline.py --stages <Each stage folder>`
 
 ## Run it
 See `deploy/README_RUNPOD.md` (rent a 48 GB GPU, `setup_runpod.sh`, then `run_on_pod.sh --limit 1`).
@@ -26,7 +27,7 @@ Test without a GPU: `python tests/simulate_gpu_loss.py --backend folder` (fake d
 ```
 pipeline/        stages A, B, D, E, F, G + self_extract (no GPU needed except Whisper)
 omni_client/     Stage C client + prompts
-orchestrator/    run_pipeline.py (resumable), drive_sync.py, preflight.py, state.py, progress.py
+orchestrator/    run_pipeline.py (resumable), aggregate_offline.py, drive_sync.py, preflight.py, state.py, progress.py
 deploy/          RunPod scripts, smoke test, orion.env.example
 tests/           fake-data simulation (mock vLLM, fake rclone, stub Whisper)
 INPUT/ OUTPUT/   data folders (contents are git-ignored)

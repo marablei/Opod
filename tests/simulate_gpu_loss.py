@@ -111,17 +111,17 @@ print(f"\n=== phase 1: pod A, model server dies after {args.fail_after} calls ==
 podA, r = run_pod("podA", args.fail_after)
 n1 = len(calls())
 s1 = state("video_001")
-cache1 = list((STG_DIR / "video_001/03_omni_raw/_cache_live").glob("*.json"))
+cache1 = list((STG_DIR / "video_001/stage_c_omni/_cache_live").glob("*.json"))
 check(s1["stage_c"] == "failed", f"video_001 stage_c recorded as failed on Drive (got {s1['stage_c']})")
 check(s1["stage_a"] == "done" and s1["stage_b"] == "done", "stages A,B already saved to Drive")
 check(len(cache1) == args.fail_after, f"Drive holds the {args.fail_after} finished model calls (found {len(cache1)})")
-check(not (STG_DIR / "video_001/03_omni_raw/_clips").exists(), "big _clips scratch was NOT uploaded")
+check(not (STG_DIR / "video_001/stage_c_omni/_clips").exists(), "big _clips scratch was NOT uploaded")
 check((STG_DIR / "video_001/_data_quality.json").exists(), "data-quality report saved")
 if not args.fixture:
-    check((STG_DIR / "video_001/00_self_extract.json").exists(), "self-extracted transcript/shots saved to Drive (no A-files used)")
+    check((STG_DIR / "video_001/stage_a_extract/self_extract.json").exists(), "self-extracted transcript/shots saved to Drive (no A-files used)")
     check(not list(IN_DIR.rglob("P1_*")), "input bundle contains NO agent files")
 
-chunks = json.loads((STG_DIR / "video_001/02_chunks/segment_chunks.json").read_text())
+chunks = json.loads((STG_DIR / "video_001/stage_b_chunks/segment_chunks.json").read_text())
 per_video = 2 * len(chunks) + 2
 print(f"  ({len(chunks)} chunks -> {per_video} model calls per video)")
 
@@ -152,10 +152,28 @@ check("video" not in sysmsg and "you have the actual" not in sysmsg, "stored tra
 check("video clip" in subprocess.run([sys.executable, "-c", "import sys;sys.path.insert(0,'.');from omni_client.prompts import DIRECTOR_SYSTEM as d;print(d)"], capture_output=True, text=True, cwd=REPO).stdout.lower(), "teacher (Omni) prompt still tells it about the video")
 foot = (SFT_DIR / "footage_sft.jsonl").read_text().strip()
 check(foot == "", "Footage rows with an EMPTY candidate pool are held back (0 rows in footage_sft)")
-check(any("empty candidate pool" in l for l in (STG_DIR / "video_001/05_sft/_qa_rejections.log").read_text().splitlines()), "...and the reason is logged")
-check(len((STG_DIR / "video_001/05_sft/footage_sft.pre_qa.jsonl").read_text().splitlines()) == len(chunks), "...and nothing is deleted: the pre-QA footage rows are still on Drive")
+check(any("empty candidate pool" in l for l in (STG_DIR / "video_001/stage_f_final/_qa_rejections.log").read_text().splitlines()), "...and the reason is logged")
+check(len((STG_DIR / "video_001/stage_e_sft/footage_sft.jsonl").read_text().splitlines()) == len(chunks), "...and nothing is deleted: the pre-QA footage rows are still on Drive")
 check((podB / "INPUT/video_001" / VID_NAME["video_001"]).exists(), "input videos are KEPT on the pod (nothing deleted)")
 check(((IN_DIR / "video_001.mp4") if IDS else (IN_DIR / "video_001/video.mp4")).exists(), "Drive INPUT untouched")
+
+# --- layout: video / stage folder / files, and per-video FINAL results saved before any batch aggregation ---
+for v in ("video_001", "video_002"):
+    vd = STG_DIR / v
+    folders = sorted(x.name for x in vd.iterdir() if x.is_dir())
+    check(folders == ["stage_a_extract", "stage_b_chunks", "stage_c_omni", "stage_d_judge", "stage_e_sft", "stage_f_final"],
+          f"{v}: one folder per stage on Drive ({', '.join(folders)})")
+    check(all((vd / "stage_f_final" / f"{n}_sft.jsonl").exists() for n in ("director", "style", "footage", "story_architect")),
+          f"{v}: its 4 FINAL files are saved in its own stage_f_final folder")
+check(not [x for x in (STG_DIR / "video_001").iterdir() if x.is_file() and not x.name.startswith("_")], "video folder holds only stage folders + _state/_timing/_errors/_data_quality bookkeeping files")
+
+# --- offline re-aggregation from the per-video results gives exactly the same 4 files ---
+off = W / "offline_final"
+r2 = subprocess.run([sys.executable, str(REPO / "orchestrator/aggregate_offline.py"), "--stages", str(STG_DIR), "--out", str(off)],
+                    capture_output=True, text=True)
+check(r2.returncode == 0, "offline aggregation ran (no GPU, no model)")
+for n in ("director", "style", "footage", "story_architect"):
+    check((off / f"{n}_sft.jsonl").read_bytes() == (SFT_DIR / f"{n}_sft.jsonl").read_bytes(), f"offline {n}_sft.jsonl is identical to the batch result")
 
 print("\n=== phase 3: pod C, everything already done ===")
 podC, r = run_pod("podC", -1)

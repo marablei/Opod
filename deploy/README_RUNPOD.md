@@ -20,7 +20,8 @@ Three folders (the IDs are already in `orion.env.example`; they go in as `ORION_
 ```
 Data sets/                 (main folder, just for you)
   Input videos/            you upload here: a subfolder per video, OR the video files directly
-  Each stage/              the pipeline writes <video>/00_self_extract.json ... 05_sft/ here (also the resume data)
+  Each stage/              <video name>/<stage folder>/<files>, e.g. video_001/stage_c_omni/director_raw.json
+                           (stage_a_extract, stage_b_chunks, stage_c_omni, stage_d_judge, stage_e_sft, stage_f_final)
   Output SFT dataset/      the 4 final files: director_sft / style_sft / footage_sft / story_architect_sft .jsonl
 ```
 The token you create in step 0 must belong to a Google account that can EDIT these folders (usually the owner).
@@ -75,6 +76,18 @@ It runs in the background, so closing the terminal doesn't stop it. Follow with 
 
 Results appear on Drive: the 4 final `*_sft.jsonl` in the "Output SFT dataset" folder, and one folder per video
 (every stage's output, `_timing.json`, `_data_quality.json`, `_errors.log`) in "Each stage".
+
+## 3b. Every video is final on its own, before the batch ends
+
+Each video saves its own final training rows to `Each stage/<video>/stage_f_final/` the moment it finishes, and
+that folder is pushed to Drive immediately. The 4 combined files in "Output SFT dataset" are only a convenience
+copy made at the end. If a batch stops halfway, or you want to redo the combining on your own PC, no GPU is needed:
+
+```
+python orchestrator/aggregate_offline.py --stages "<path to the downloaded Each stage folder>" --out ./final_sft
+```
+(only the `stage_f_final` folders and `_state.json` files are needed; videos not fully done are skipped,
+`--only video_001,video_004` picks some, nothing in the stages folder is changed).
 
 ## 4. If the GPU dies / you stop early
 

@@ -242,6 +242,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
         "supplementary_agents": supplementary_agents,
     }
 
-    out_path = video_out_dir / "01_unified_dna.json"
+    out_path = video_out_dir / "stage_a_extract" / "unified_dna.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(unified, indent=2))
     return out_path
