@@ -16,12 +16,18 @@ run the same two commands, and it resumes from what reached Drive.
 
 ## 1. Put your videos on Drive
 
+Three folders (the IDs are already in `orion.env.example`; they go in as `ORION_DRIVE_INPUT_ID`, `_STAGES_ID`, `_SFT_ID`):
 ```
-My Drive/Orion/INPUT/video_001/   <- just the video file (.mp4/.mov/.mkv/.avi/.webm)
-My Drive/Orion/INPUT/video_002/
-...
+Data sets/                 (main folder, just for you)
+  Input videos/            you upload here: a subfolder per video, OR the video files directly
+  Each stage/              the pipeline writes <video>/00_self_extract.json ... 05_sft/ here (also the resume data)
+  Output SFT dataset/      the 4 final files: director_sft / style_sft / footage_sft / story_architect_sft .jsonl
 ```
-(`Orion/OUTPUT/` is created by the pipeline.) One folder per video, any folder names.
+The token you create in step 0 must belong to a Google account that can EDIT these folders (usually the owner).
+"Anyone with the link" does not replace the token, and it is risky: anyone who gets a link to a folder with
+Editor rights could change or delete your data. Prefer "Restricted" (only you).
+`drive_check.py` writes a tiny `_orion_connected.txt` into the stages and SFT folders to prove write access
+before any GPU time is spent.
 
 **Only the video is required. No A-files.** Any `P1_A*.jsonl` in a folder is ignored. The pipeline reads the video
 itself: ffprobe (duration), ffmpeg (shot cuts), Whisper (transcript with timestamps), and the Omni model watches and
@@ -42,9 +48,9 @@ listens. (Set `ORION_USE_AGENTS=1` only if you ever want the old agent files use
 
 Give the pod your Drive settings once (pick one):
 * **Best: pod environment variables.** In RunPod, save a Template (or edit the pod) with the variables from
-  `orion.env.example`: `ORION_DRIVE_REMOTE`, `RCLONE_CONFIG_GDRIVE_TYPE`, `RCLONE_CONFIG_GDRIVE_SCOPE`,
-  `RCLONE_CONFIG_GDRIVE_TOKEN`. Every pod you start from that template already has them.
-  Check in the web terminal: `echo $ORION_DRIVE_REMOTE` should print `gdrive:Orion`.
+  `orion.env.example`: `ORION_DRIVE_INPUT_ID`, `ORION_DRIVE_STAGES_ID`, `ORION_DRIVE_SFT_ID`, `RCLONE_CONFIG_GDRIVE_TYPE`,
+  `RCLONE_CONFIG_GDRIVE_SCOPE`, `RCLONE_CONFIG_GDRIVE_TOKEN`. Every pod you start from that template already has them.
+  Check in the web terminal: `echo $ORION_DRIVE_INPUT_ID` should print the folder ID.
 * **Or a file:** paste the same lines into `/workspace/orion.env` (`nano /workspace/orion.env`).
 * Do NOT commit the token to git: it is a password to your whole Drive and stays in git history forever,
   even in a private repo.
@@ -67,8 +73,8 @@ bash Orion_Pipeline/go.sh
 ```
 It runs in the background, so closing the terminal doesn't stop it. Follow with `tail -f /workspace/orion_run.log`.
 
-Results appear on Drive under `Orion/OUTPUT/`: the 4 final `*_sft.jsonl`, plus one folder per video
-with every stage's output, `_timing.json`, `_data_quality.json` and `_errors.log`.
+Results appear on Drive: the 4 final `*_sft.jsonl` in the "Output SFT dataset" folder, and one folder per video
+(every stage's output, `_timing.json`, `_data_quality.json`, `_errors.log`) in "Each stage".
 
 ## 4. If the GPU dies / you stop early
 
@@ -94,5 +100,7 @@ stage, and inside Stage C continue from the first model call not yet saved.
 * Whether a 75 s chunk (video + audio) fits in the 32k context at 360p/2 fps is an estimate.
   If the smoke/1-video test OOMs: `ORION_CLIP_HEIGHT=288 ORION_CLIP_FPS=1` in `orion.env`.
 * The real rclone binary was not available where this was built; the Drive logic is tested with a
-  folder backend and an rclone stand-in, not against Google. `drive_check.py` is your first real test.
+  folder backend and an rclone stand-in, not against Google. In particular the `gdrive,root_folder_id=<ID>:` form
+  used to open your three folders is standard rclone syntax but was not run against real Drive.
+  `drive_check.py` is your first real test.
 * The 10-30 min/video and the $/100-video figures remain estimates until the 1-video run.

@@ -23,11 +23,25 @@ while i < len(rest):
         pos.append(t); i += 1
 
 
+import re
+
+
 def real(p):
-    return ROOT / p.split(":", 1)[1] if ":" in p and not p.startswith("/") else Path(p)
+    """gdrive:path -> ROOT/path ;  gdrive,root_folder_id=ID:path -> ROOT/ID/path (like rclone connection strings)."""
+    if p.startswith("/") or ":" not in p:
+        return Path(p)
+    head, tail = p.split(":", 1)
+    m = re.search(r"root_folder_id=([^,]+)", head)
+    return (ROOT / m.group(1) / tail) if m else (ROOT / tail)
 
 
-if cmd == "mkdir":
+if cmd == "copyto":
+    src, dst = real(pos[0]), real(pos[1])
+    if not src.is_file():
+        sys.exit(3)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+elif cmd == "mkdir":
     real(pos[0]).mkdir(parents=True, exist_ok=True)
 elif cmd == "lsf":
     d = real(pos[0])

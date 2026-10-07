@@ -6,8 +6,8 @@ Orion Pipeline — 1-click orchestrator.
     python orchestrator/run_pipeline.py --only video_003,video_004
 
 With Drive sync on (ORION_DRIVE_REMOTE or --drive), it behaves like this:
-  1. pull OUTPUT/ from Drive          -> learn what's already done (new GPU resume)
-  2. list INPUT/ on Drive             -> the videos to process
+  1. pull the stage outputs from Drive -> learn what's already done (new GPU resume)
+  2. list the input folder on Drive    -> the videos to process (subfolder per video, or loose files)
   3. per video, only if unfinished:   pull its INPUT bundle, run stages A..F
      pushing that video's folder to Drive after EVERY stage change
   4. Stage G aggregates the 4 final SFT files, pushed at the end
@@ -15,7 +15,7 @@ Lose the GPU at any point: start another, run the same command, and it picks
 up from the last stage (and, inside Stage C, the last model call) that
 reached Drive.
 
-Each video folder under INPUT/ holds the video file + P1_A01..A30 jsonl.
+Each video is a video file (in its own subfolder, or loose in the input folder). No other files are needed.
 """
 import argparse
 import os
@@ -141,7 +141,7 @@ def main():
     input_root.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    drive = drive_sync.DriveSync(args.drive, input_root, run_dir)
+    drive = drive_sync.DriveSync.from_env(args.drive, input_root, run_dir)
     drive_sync.set_default(drive)
     print(f"[orion] mode={stage_c_omni.MODE}  drive={drive.describe()}")
     if stage_c_omni.MODE == "live":
@@ -155,7 +155,7 @@ def main():
         drive.pull_output()
         videos = drive.list_input_videos()
         if not videos:
-            print(f"[orion] No video folders found under {drive.remote}/INPUT")
+            print(f"[orion] No videos found in the input folder ({drive.in_root}). Put each video in its own subfolder, or loose in the folder.")
             sys.exit(2)
     else:
         videos = discover_local_videos(input_root)

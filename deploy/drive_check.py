@@ -10,15 +10,27 @@ from orchestrator.drive_sync import DriveSync
 from orchestrator import preflight
 
 ws = Path(os.environ.get("ORION_WORKSPACE", "/workspace"))
-d = DriveSync(os.environ.get("ORION_DRIVE_REMOTE", ""), ws / "INPUT", ws / "OUTPUT")
+d = DriveSync.from_env(os.environ.get("ORION_DRIVE_REMOTE", ""), ws / "INPUT", ws / "OUTPUT")
 if not d.enabled:
-    print("ORION_DRIVE_REMOTE not set — nothing to check."); sys.exit(0)
+    print("No Drive settings (ORION_DRIVE_REMOTE or the three ORION_DRIVE_*_ID) — nothing to check."); sys.exit(0)
 print(f"Drive backend: {d.describe()}")
 if not d.ensure_remote_dirs():
-    print("✗ Cannot reach Drive. Check the rclone token in orion.env (see deploy/README_RUNPOD.md)."); sys.exit(2)
+    print("✗ Cannot reach Drive. Check the rclone token and folder IDs (see deploy/README_RUNPOD.md)."); sys.exit(2)
+# Write test: proves the token may WRITE to the stages + final-SFT folders before any GPU time is spent.
+import tempfile, shutil, subprocess
+marker = Path(tempfile.mkdtemp()) / "_orion_connected.txt"
+marker.write_text("Orion pod connected. Safe to ignore.\n")
+for label, root in (("stages", d.stage_root), ("final SFT", d.sft_root)):
+    if d.local_backend:
+        Path(root).mkdir(parents=True, exist_ok=True); shutil.copy(marker, Path(root) / marker.name); ok = True
+    else:
+        ok = d._rclone(["copyto", str(marker), d._j(root, marker.name), "--stats", "0", "-q"], retries=2) is not None
+    print(("✓" if ok else "✗") + f" can write to the {label} folder")
+    if not ok:
+        print("   (the Google account behind the token needs EDIT access to that folder)"); sys.exit(2)
 videos = d.list_input_videos()
 if not videos:
-    print(f"✗ No video folders under {d.remote}/INPUT"); sys.exit(2)
+    print(f"✗ No videos found in the input folder ({d.in_root})"); sys.exit(2)
 bad = 0
 for v in videos:
     names = d.list_input_files(v)

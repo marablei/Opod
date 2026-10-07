@@ -47,7 +47,7 @@ if [ -n "$NEED_APT" ]; then
 fi
 
 # ---- 2. rclone (Google Drive) ------------------------------------------------
-if [ -n "${ORION_DRIVE_REMOTE:-}" ] && [[ "${ORION_DRIVE_REMOTE}" != /* ]]; then
+if drive_needs_rclone; then
   if ! command -v rclone >/dev/null 2>&1; then
     log "installing rclone"
     curl -fsSL https://rclone.org/install.sh | $SUDO bash

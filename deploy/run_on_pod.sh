@@ -21,8 +21,8 @@ export ORION_OMNI_MODE=live
 export ORION_OMNI_ENDPOINT="http://127.0.0.1:$PORT/v1/chat/completions"
 export ORION_OMNI_MODEL="$SERVED_NAME"
 export ORION_DRIVE_REMOTE="${ORION_DRIVE_REMOTE:-}"
-if [ -z "$ORION_DRIVE_REMOTE" ]; then
-  log "WARNING: ORION_DRIVE_REMOTE is empty — nothing will be saved to Drive. If this pod dies you lose everything. Set it in $ENV_FILE."
+if ! drive_configured; then
+  log "WARNING: no Drive settings — nothing will be saved to Drive. If this pod dies you lose everything. Set them in $ENV_FILE."
 else
   log "checking Drive access + input bundles ..."
   "$PY" "$REPO_DIR/deploy/drive_check.py" || die "Drive check failed — fix before spending GPU time."

@@ -67,6 +67,12 @@ done
 export ORION_USE_AGENTS="${ORION_USE_AGENTS:-0}"
 export ORION_WHISPER_MODEL="${ORION_WHISPER_MODEL:-large-v3-turbo}"
 
+# Drive settings can be one root (ORION_DRIVE_REMOTE) or three folders by ID (ORION_DRIVE_*_ID).
+drive_configured() { [ -n "${ORION_DRIVE_REMOTE:-}" ] || [ -n "${ORION_DRIVE_INPUT_ID:-}" ]; }
+drive_needs_rclone() {  # true unless the "remote" is a plain folder path
+  if [ -n "${ORION_DRIVE_INPUT_ID:-}" ]; then return 0; fi
+  [ -n "${ORION_DRIVE_REMOTE:-}" ] && [[ "${ORION_DRIVE_REMOTE}" != /* ]] && [[ "${ORION_DRIVE_REMOTE}" != local:* ]]
+}
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 die() { echo "[$(date +%H:%M:%S)] ERROR: $*" >&2; exit 1; }
 server_healthy() { curl -sf -m 5 "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1; }

@@ -7,7 +7,9 @@ End-to-end resume simulation (no GPU, no network):
                     (Stage C continues from its cache, not from zero)
   phase 3  "pod C": everything finished -> must do ZERO model calls
 
-Usage: python tests/simulate_gpu_loss.py [--backend folder|rclone] [--fixture DIR]
+Usage: python tests/simulate_gpu_loss.py [--backend folder|rclone|ids] [--fixture DIR]
+  ids = your own three Drive folders by ID (input / stages / final SFT), with one video as a LOOSE file
+        and one in a subfolder, through the rclone stand-in.
 """
 import argparse
 import json
@@ -20,16 +22,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ap = argparse.ArgumentParser()
-ap.add_argument("--backend", default="folder", choices=["folder", "rclone"])
+ap.add_argument("--backend", default="folder", choices=["folder", "rclone", "ids"])
 ap.add_argument("--fixture", default="", help="folder of P1_A*.jsonl to include AND use (sets ORION_USE_AGENTS=1). Default: no agent files at all.")
 ap.add_argument("--fail-after", type=int, default=30)
 args = ap.parse_args()
 
 W = Path("/tmp/orion_sim"); shutil.rmtree(W, ignore_errors=True); W.mkdir()
 DRIVE = W / "drive"            # what "Google Drive" holds
-(DRIVE / "INPUT").mkdir(parents=True)
+IDS = args.backend == "ids"
+if IDS:
+    # three separate Drive folders addressed by ID, like the user's real layout
+    IN_DIR, STG_DIR, SFT_DIR = (W / "rcroot" / "IDIN"), (W / "rcroot" / "IDSTAGES"), (W / "rcroot" / "IDSFT")
+else:
+    IN_DIR, STG_DIR, SFT_DIR = DRIVE / "INPUT", DRIVE / "OUTPUT", DRIVE / "OUTPUT"
+IN_DIR.mkdir(parents=True)
 LOG = W / "mock_calls.jsonl"
 PORT = 8977
+VID_NAME = {"video_001": "video_001.mp4" if IDS else "video.mp4", "video_002": "video.mp4"}
 
 # --- build 2 input bundles: real agent files + a synthetic video -------------
 vid = W / "src.mp4"
@@ -38,20 +47,28 @@ subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"testsrc=duration={dur}:si
                 "-f", "lavfi", "-i", f"sine=frequency=300:duration={dur}", "-c:v", "libx264", "-preset", "ultrafast",
                 "-c:a", "aac", "-b:a", "32k", "-pix_fmt", "yuv420p", "-loglevel", "error", str(vid)], check=True)
 for v in ("video_001", "video_002"):
-    d = DRIVE / "INPUT" / v
+    if IDS and v == "video_001":
+        shutil.copy(vid, IN_DIR / "video_001.mp4")      # a LOOSE video file, no subfolder
+        continue
+    d = IN_DIR / v
     if args.fixture: shutil.copytree(args.fixture, d)
     else: d.mkdir(parents=True)
     shutil.copy(vid, d / "video.mp4")
-print(f"built 2 input bundles ({len(list((DRIVE/'INPUT'/'video_001').iterdir()))} files each)")
+print(f"built 2 inputs ({'1 loose file + 1 subfolder' if IDS else 'subfolders'})")
 
-if args.backend == "rclone":
-    remote = "gdrive:drive"
+extra_env = {}
+remote = str(DRIVE)
+if args.backend in ("rclone", "ids"):
     shim = W / "bin"; shim.mkdir()
     (shim / "rclone").symlink_to(REPO / "tests" / "fake_rclone.py")
-    root = W / "rcroot"; (root).mkdir(); (root / "drive").symlink_to(DRIVE)
-    extra_env = {"PATH": f"{shim}:{os.environ['PATH']}", "FAKE_RCLONE_ROOT": str(root)}
-else:
-    remote = str(DRIVE); extra_env = {}
+    root = W / "rcroot"; root.mkdir(exist_ok=True)
+    if not IDS:
+        (root / "drive").symlink_to(DRIVE); remote = "gdrive:drive"
+    else:
+        STG_DIR.mkdir(parents=True, exist_ok=True); SFT_DIR.mkdir(parents=True, exist_ok=True)
+        remote = ""
+        extra_env = {"ORION_DRIVE_INPUT_ID": "IDIN", "ORION_DRIVE_STAGES_ID": "IDSTAGES", "ORION_DRIVE_SFT_ID": "IDSFT"}
+    extra_env.update({"PATH": f"{shim}:{os.environ['PATH']}", "FAKE_RCLONE_ROOT": str(root)})
 
 
 def mock(fail_after):
@@ -82,7 +99,7 @@ def run_pod(name, fail_after):
 
 
 def state(v):
-    return json.loads((DRIVE / "OUTPUT" / v / "_state.json").read_text())
+    return json.loads((STG_DIR / v / "_state.json").read_text())
 
 
 fails = []
@@ -94,17 +111,17 @@ print(f"\n=== phase 1: pod A, model server dies after {args.fail_after} calls ==
 podA, r = run_pod("podA", args.fail_after)
 n1 = len(calls())
 s1 = state("video_001")
-cache1 = list((DRIVE / "OUTPUT/video_001/03_omni_raw/_cache_live").glob("*.json"))
+cache1 = list((STG_DIR / "video_001/03_omni_raw/_cache_live").glob("*.json"))
 check(s1["stage_c"] == "failed", f"video_001 stage_c recorded as failed on Drive (got {s1['stage_c']})")
 check(s1["stage_a"] == "done" and s1["stage_b"] == "done", "stages A,B already saved to Drive")
 check(len(cache1) == args.fail_after, f"Drive holds the {args.fail_after} finished model calls (found {len(cache1)})")
-check(not (DRIVE / "OUTPUT/video_001/03_omni_raw/_clips").exists(), "big _clips scratch was NOT uploaded")
-check((DRIVE / "OUTPUT/video_001/_data_quality.json").exists(), "data-quality report saved")
+check(not (STG_DIR / "video_001/03_omni_raw/_clips").exists(), "big _clips scratch was NOT uploaded")
+check((STG_DIR / "video_001/_data_quality.json").exists(), "data-quality report saved")
 if not args.fixture:
-    check((DRIVE / "OUTPUT/video_001/00_self_extract.json").exists(), "self-extracted transcript/shots saved to Drive (no A-files used)")
-    check(not list((DRIVE / "INPUT/video_001").glob("P1_*")), "input bundle contains NO agent files")
+    check((STG_DIR / "video_001/00_self_extract.json").exists(), "self-extracted transcript/shots saved to Drive (no A-files used)")
+    check(not list(IN_DIR.rglob("P1_*")), "input bundle contains NO agent files")
 
-chunks = json.loads((DRIVE / "OUTPUT/video_001/02_chunks/segment_chunks.json").read_text())
+chunks = json.loads((STG_DIR / "video_001/02_chunks/segment_chunks.json").read_text())
 per_video = 2 * len(chunks) + 2
 print(f"  ({len(chunks)} chunks -> {per_video} model calls per video)")
 
@@ -123,22 +140,22 @@ check(all(p == ["image_url"] * 8 + ["text"] for p in kinds["style"] + kinds["sto
 check(not list(podB.rglob("*.tmp")), "no torn temp files")
 
 for name in ("director", "style", "footage", "story_architect"):
-    f = DRIVE / "OUTPUT" / f"{name}_sft.jsonl"
+    f = SFT_DIR / f"{name}_sft.jsonl"
     rows = [json.loads(l) for l in f.read_text().splitlines()] if f.exists() else []
     print(f"  final {name}_sft.jsonl on Drive: {len(rows)} rows")
-dir_rows = len((DRIVE / "OUTPUT/director_sft.jsonl").read_text().splitlines())
+dir_rows = len((SFT_DIR / "director_sft.jsonl").read_text().splitlines())
 check(dir_rows == 2 * len(chunks), f"director_sft has {dir_rows} rows = 2 videos x {len(chunks)} chunks")
-check(len((DRIVE / "OUTPUT/story_architect_sft.jsonl").read_text().splitlines()) == 2, "story_architect_sft has 2 rows (grounded in real segment ids)")
-first = json.loads((DRIVE / "OUTPUT/director_sft.jsonl").read_text().splitlines()[0])
+check(len((SFT_DIR / "story_architect_sft.jsonl").read_text().splitlines()) == 2, "story_architect_sft has 2 rows (grounded in real segment ids)")
+first = json.loads((SFT_DIR / "director_sft.jsonl").read_text().splitlines()[0])
 sysmsg = first["messages"][0]["content"].lower()
 check("video" not in sysmsg and "you have the actual" not in sysmsg, "stored training rows use the TEXT-ONLY student system prompt (no video mention)")
 check("video clip" in subprocess.run([sys.executable, "-c", "import sys;sys.path.insert(0,'.');from omni_client.prompts import DIRECTOR_SYSTEM as d;print(d)"], capture_output=True, text=True, cwd=REPO).stdout.lower(), "teacher (Omni) prompt still tells it about the video")
-foot = (DRIVE / "OUTPUT/footage_sft.jsonl").read_text().strip()
+foot = (SFT_DIR / "footage_sft.jsonl").read_text().strip()
 check(foot == "", "Footage rows with an EMPTY candidate pool are held back (0 rows in footage_sft)")
-check(any("empty candidate pool" in l for l in (DRIVE / "OUTPUT/video_001/05_sft/_qa_rejections.log").read_text().splitlines()), "...and the reason is logged")
-check(len((DRIVE / "OUTPUT/video_001/05_sft/footage_sft.pre_qa.jsonl").read_text().splitlines()) == len(chunks), "...and nothing is deleted: the pre-QA footage rows are still on Drive")
-check((podB / "INPUT/video_001/video.mp4").exists(), "input videos are KEPT on the pod (nothing deleted)")
-check((DRIVE / "INPUT/video_001/video.mp4").exists(), "Drive INPUT untouched")
+check(any("empty candidate pool" in l for l in (STG_DIR / "video_001/05_sft/_qa_rejections.log").read_text().splitlines()), "...and the reason is logged")
+check(len((STG_DIR / "video_001/05_sft/footage_sft.pre_qa.jsonl").read_text().splitlines()) == len(chunks), "...and nothing is deleted: the pre-QA footage rows are still on Drive")
+check((podB / "INPUT/video_001" / VID_NAME["video_001"]).exists(), "input videos are KEPT on the pod (nothing deleted)")
+check(((IN_DIR / "video_001.mp4") if IDS else (IN_DIR / "video_001/video.mp4")).exists(), "Drive INPUT untouched")
 
 print("\n=== phase 3: pod C, everything already done ===")
 podC, r = run_pod("podC", -1)

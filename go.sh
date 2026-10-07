@@ -13,14 +13,14 @@ source "$HERE/deploy/_common.sh"
 mkdir -p "$WORKSPACE"
 
 # 1. Fail in seconds (not after a 20-minute install) if Drive is not configured.
-if [ -z "${ORION_DRIVE_REMOTE:-}" ] && [ "${ORION_ALLOW_NO_DRIVE:-0}" != "1" ]; then
+if ! drive_configured && [ "${ORION_ALLOW_NO_DRIVE:-0}" != "1" ]; then
   die "Drive is not configured, so nothing would be saved if the pod dies.
-  Set ORION_DRIVE_REMOTE and RCLONE_CONFIG_GDRIVE_* as pod environment variables,
+  Set ORION_DRIVE_INPUT_ID / _STAGES_ID / _SFT_ID (or ORION_DRIVE_REMOTE) and RCLONE_CONFIG_GDRIVE_* as pod environment variables,
   or put them in $ENV_FILE (copy deploy/orion.env.example). Then run this again.
   (To run without Drive anyway: ORION_ALLOW_NO_DRIVE=1)"
 fi
-if [[ "${ORION_DRIVE_REMOTE:-}" != /* ]] && [ -n "${ORION_DRIVE_REMOTE:-}" ] && [ -z "${RCLONE_CONFIG_GDRIVE_TOKEN:-}" ]; then
-  die "ORION_DRIVE_REMOTE=$ORION_DRIVE_REMOTE but RCLONE_CONFIG_GDRIVE_TOKEN is empty. Paste the token from 'rclone authorize \"drive\"'."
+if drive_configured && drive_needs_rclone && [ -z "${RCLONE_CONFIG_GDRIVE_TOKEN:-}" ]; then
+  die "Drive is configured but RCLONE_CONFIG_GDRIVE_TOKEN is empty. Paste the token from 'rclone authorize \"drive\"'."
 fi
 
 # 2. Install + model + server + smoke test (idempotent: a re-run only checks and continues).

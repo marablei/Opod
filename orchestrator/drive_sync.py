@@ -14,7 +14,14 @@ processed. Finished videos are skipped; a half-finished video resumes at its
 first incomplete stage, and Stage C resumes at its first incomplete model
 call (see _cache_live/ in stage_c_omni.py).
 
-`ORION_DRIVE_REMOTE` picks the backend:
+THREE-FOLDER MODE (your own Drive layout, by folder ID, no fixed names needed):
+    ORION_DRIVE_INPUT_ID   -> folder with the input videos (one subfolder per video, or loose video files)
+    ORION_DRIVE_STAGES_ID  -> folder where every video's stage outputs go (<video_id>/...)
+    ORION_DRIVE_SFT_ID     -> folder for the final *_sft.jsonl files + batch status
+  They are opened through the rclone remote named by ORION_DRIVE_REMOTE_NAME (default "gdrive")
+  using rclone connection strings: "gdrive,root_folder_id=<ID>:".
+
+`ORION_DRIVE_REMOTE` picks the single-root backend:
   - "gdrive:Orion"  -> rclone remote:path (needs the `rclone` binary + creds)
   - "/some/path"    -> plain folder (e.g. a RunPod network volume, or a
                        mounted drive). No rclone needed. Also what the local
@@ -37,33 +44,72 @@ EXCLUDE_DIRS = ("_clips", "_frames", "_audio")
 
 
 class DriveSync:
-    def __init__(self, remote: str | None, input_dir: Path, output_dir: Path):
-        self.remote = (remote or "").strip().rstrip("/") or None
+    def __init__(self, remote: str | None, input_dir: Path, output_dir: Path, roots: dict | None = None):
+        """remote: single root ("gdrive:Orion" or a folder) with INPUT/ and OUTPUT/ inside.
+        roots: {"input":..., "stages":..., "sft":...} to use three separate locations instead."""
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
-        self.local_backend = bool(self.remote) and (
-            os.path.isabs(self.remote) or self.remote.startswith("local:")
-        )
-        if self.local_backend and self.remote.startswith("local:"):
-            self.remote = self.remote[len("local:"):]
+        self.remote = (remote or "").strip().rstrip("/") or None
+        if roots:
+            self.in_root = roots["input"].rstrip("/") if roots["input"].endswith("/") else roots["input"]
+            self.stage_root = roots["stages"]
+            self.sft_root = roots["sft"]
+            self.remote = self.remote or self.in_root
+        elif self.remote:
+            local_form = os.path.isabs(self.remote) or self.remote.startswith("local:")
+            if local_form and self.remote.startswith("local:"):
+                self.remote = self.remote[len("local:"):]
+            self.in_root = f"{self.remote}/INPUT"
+            self.stage_root = f"{self.remote}/OUTPUT"
+            self.sft_root = f"{self.remote}/OUTPUT"
+        else:
+            self.in_root = self.stage_root = self.sft_root = None
+        self.local_backend = bool(self.in_root) and all(
+            os.path.isabs(r) for r in (self.in_root, self.stage_root, self.sft_root))
         self._last_push: dict[str, float] = {}
         self.failed_pushes: set[str] = set()
+        self._input_index: dict[str, tuple[str, str]] = {}  # video_id -> ("dir"|"file", remote name)
+
+    @classmethod
+    def from_env(cls, remote_arg: str, input_dir: Path, output_dir: Path) -> "DriveSync":
+        """Pick the layout: explicit *_ROOT vars > folder-ID trio > single remote (--drive / ORION_DRIVE_REMOTE)."""
+        e = os.environ
+        if e.get("ORION_DRIVE_INPUT_ROOT") and e.get("ORION_DRIVE_STAGES_ROOT") and e.get("ORION_DRIVE_SFT_ROOT"):
+            return cls(None, input_dir, output_dir, roots={
+                "input": e["ORION_DRIVE_INPUT_ROOT"], "stages": e["ORION_DRIVE_STAGES_ROOT"],
+                "sft": e["ORION_DRIVE_SFT_ROOT"]})
+        ids = [e.get("ORION_DRIVE_INPUT_ID", "").strip(), e.get("ORION_DRIVE_STAGES_ID", "").strip(),
+               e.get("ORION_DRIVE_SFT_ID", "").strip()]
+        if any(ids):
+            if not all(ids):
+                raise SystemExit("Set all three of ORION_DRIVE_INPUT_ID, ORION_DRIVE_STAGES_ID, ORION_DRIVE_SFT_ID (or none).")
+            name = e.get("ORION_DRIVE_REMOTE_NAME", "gdrive").strip().rstrip(":")
+            mk = lambda i: f"{name},root_folder_id={i}:"
+            return cls(None, input_dir, output_dir, roots={"input": mk(ids[0]), "stages": mk(ids[1]), "sft": mk(ids[2])})
+        return cls(remote_arg, input_dir, output_dir)
 
     # ------------------------------------------------------------------ basics
     @property
     def enabled(self) -> bool:
-        return self.remote is not None
+        return self.in_root is not None
 
     def describe(self) -> str:
         if not self.enabled:
             return "disabled (local-only run)"
         kind = "folder" if self.local_backend else "rclone"
-        return f"{kind}: {self.remote}"
+        if self.stage_root == self.sft_root and self.in_root == f"{self.remote}/INPUT":
+            return f"{kind}: {self.remote}"
+        return f"{kind}: input={self.in_root} stages={self.stage_root} sft={self.sft_root}"
 
-    def _r(self, *parts: str) -> str:
-        """Remote path for INPUT/OUTPUT/... pieces."""
+    @staticmethod
+    def _j(root: str, *parts: str) -> str:
+        """Join a path under a root. Roots like "gdrive,root_folder_id=X:" take the path right after the colon."""
         tail = "/".join(p.strip("/") for p in parts if p)
-        return f"{self.remote}/{tail}" if tail else self.remote
+        if not tail:
+            return root
+        if root.endswith(":"):
+            return f"{root}{tail}"
+        return f"{root}/{tail}"
 
     def _log_error(self, msg: str):
         try:
@@ -143,31 +189,67 @@ class DriveSync:
 
     # --------------------------------------------------------------- public API
     def ensure_remote_dirs(self) -> bool:
+        """Legacy single-root layout: create INPUT/ and OUTPUT/. Folder-ID layout: the folders already
+        exist, so check that each one can be listed (this is the first real test of the Drive token)."""
         if not self.enabled:
             return True
         if self.local_backend:
-            Path(self._r("INPUT")).mkdir(parents=True, exist_ok=True)
-            Path(self._r("OUTPUT")).mkdir(parents=True, exist_ok=True)
+            for r in {self.in_root, self.stage_root, self.sft_root}:
+                Path(r).mkdir(parents=True, exist_ok=True)
             return True
-        ok1 = self._rclone(["mkdir", self._r("INPUT")]) is not None
-        ok2 = self._rclone(["mkdir", self._r("OUTPUT")]) is not None
-        return ok1 and ok2
+        legacy = self.in_root == f"{self.remote}/INPUT"
+        ok = True
+        for r in dict.fromkeys([self.in_root, self.stage_root, self.sft_root]):
+            res = self._rclone(["mkdir", r]) if legacy else self._rclone(["lsf", "--max-depth", "1", r], retries=2)
+            ok = ok and res is not None
+        return ok
+
+    def _video_ext(self, name: str) -> bool:
+        return Path(name).suffix.lower() in {".mp4", ".mov", ".mkv", ".avi", ".webm"}
+
+    def _list_input_entries(self) -> list[tuple[str, str, str]]:
+        """[(video_id, "dir"|"file", remote_name)] for everything in the input folder: a subfolder per
+        video, or video files lying directly in the folder (id = file name without extension)."""
+        names: list[tuple[str, bool]] = []  # (name, is_dir)
+        if self.local_backend:
+            root = Path(self.in_root)
+            if root.exists():
+                names = [(p.name, p.is_dir()) for p in sorted(root.iterdir())]
+        else:
+            res = self._rclone(["lsf", "--max-depth", "1", self.in_root])
+            if res is None:
+                return []
+            for line in res.stdout.splitlines():
+                line = line.strip()
+                if line:
+                    names.append((line.rstrip("/"), line.endswith("/")))
+        entries, seen = [], set()
+        for name, is_dir in names:
+            if is_dir:
+                entries.append((name, "dir", name)); seen.add(name)
+        for name, is_dir in names:
+            if not is_dir and self._video_ext(name):
+                vid = Path(name).stem
+                if vid not in seen:
+                    entries.append((vid, "file", name)); seen.add(vid)
+        return sorted(entries)
 
     def list_input_videos(self) -> list[str]:
-        if self.local_backend:
-            root = Path(self._r("INPUT"))
-            return sorted(p.name for p in root.iterdir() if p.is_dir()) if root.exists() else []
-        res = self._rclone(["lsf", "--dirs-only", self._r("INPUT")])
-        if res is None:
-            return []
-        return sorted(line.strip().rstrip("/") for line in res.stdout.splitlines() if line.strip())
+        entries = self._list_input_entries()
+        self._input_index = {vid: (kind, name) for vid, kind, name in entries}
+        return [vid for vid, _, _ in entries]
 
     def list_input_files(self, video_id: str) -> list[str] | None:
         """File names in one video's INPUT bundle, without downloading anything."""
+        if not self._input_index:
+            self.list_input_videos()
+        kind, name = self._input_index.get(video_id, ("dir", video_id))
+        if kind == "file":
+            return [name]
         if self.local_backend:
-            d = Path(self._r("INPUT", video_id))
+            d = Path(self._j(self.in_root, name))
             return sorted(p.name for p in d.iterdir() if p.is_file()) if d.exists() else None
-        res = self._rclone(["lsf", "--files-only", self._r("INPUT", video_id)])
+        res = self._rclone(["lsf", "--files-only", self._j(self.in_root, name)])
         if res is None:
             return None
         return sorted(line.strip() for line in res.stdout.splitlines() if line.strip())
@@ -177,13 +259,28 @@ class DriveSync:
         if not self.enabled:
             return True
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        return self._copy(self._r("OUTPUT"), self.output_dir, update=True)
+        return self._copy(self.stage_root, self.output_dir, update=True)
 
     def pull_input(self, video_id: str) -> bool:
         if not self.enabled:
             return True
+        if not self._input_index:
+            self.list_input_videos()
+        kind, name = self._input_index.get(video_id, ("dir", video_id))
         dst = self.input_dir / video_id
-        ok = self._copy(self._r("INPUT", video_id), dst, update=True)
+        if kind == "file":
+            dst.mkdir(parents=True, exist_ok=True)
+            if self.local_backend:
+                try:
+                    shutil.copy2(Path(self._j(self.in_root, name)), dst / name)
+                    ok = True
+                except OSError as e:
+                    self._log_error(f"copy failed {name}: {e}"); ok = False
+            else:
+                ok = self._rclone(["copyto", self._j(self.in_root, name), str(dst / name),
+                                   "--stats", "0", "-q"]) is not None
+        else:
+            ok = self._copy(self._j(self.in_root, name), dst, update=True)
         return ok and dst.exists() and any(dst.iterdir())
 
     def push_video(self, video_id: str) -> bool:
@@ -192,7 +289,7 @@ class DriveSync:
         src = self.output_dir / video_id
         if not src.exists():
             return True
-        ok = self._copy(src, self._r("OUTPUT", video_id))
+        ok = self._copy(src, self._j(self.stage_root, video_id))
         if ok:
             self.failed_pushes.discard(video_id)
             self._last_push[video_id] = time.time()
@@ -210,7 +307,7 @@ class DriveSync:
         """Top-level files only: _batch_status.json, _batch_summary.csv, the 4 final SFT files."""
         if not self.enabled:
             return True
-        return self._copy(self.output_dir, self._r("OUTPUT"), depth_one=True)
+        return self._copy(self.output_dir, self.sft_root, depth_one=True)
 
     def retry_failed_pushes(self) -> list[str]:
         """Last-chance retry at end of batch. Returns video_ids still failing."""
