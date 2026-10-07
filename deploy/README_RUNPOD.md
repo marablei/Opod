@@ -31,24 +31,39 @@ listens. (Set `ORION_USE_AGENTS=1` only if you ever want the old agent files use
 
 * Template: a RunPod **PyTorch** template (Ubuntu, Python 3.10-3.12, CUDA 12.x).
 * GPU: **one 48 GB card** (RTX A6000 / L40S / RTX 6000 Ada) for the default `awq48` profile.
-* Disk: container disk **>= 60 GB plus the size of your input videos** (nothing is deleted from the pod, so size it for all of them; Drive keeps everything too). If you want the model cached between pods, attach a
-  network volume mounted at `/workspace` (otherwise the ~20 GB model re-downloads each time).
+* Disk: set **Volume Disk >= 100 GB** (it is mounted at `/workspace`, where the model (~20 GB), the Python
+  environment, your videos and all outputs live). Container Disk can stay at its default (~30 GB).
+  Setup stops early with a clear message if `/workspace` is too small. Nothing is deleted from the pod.
+  Stopping a pod keeps the Volume Disk; terminating it deletes it (Drive still has your results).
 * Official BF16 weights (`MODEL_PROFILE=bf16`) need 80 GB+ and in practice 2x80 GB: far more
   expensive per hour. See "What is NOT proven".
 
-## 3. On the pod (web terminal or SSH)
+## 3. On the pod: ONE command
 
+Give the pod your Drive settings once (pick one):
+* **Best: pod environment variables.** In RunPod, save a Template (or edit the pod) with the variables from
+  `orion.env.example`: `ORION_DRIVE_REMOTE`, `RCLONE_CONFIG_GDRIVE_TYPE`, `RCLONE_CONFIG_GDRIVE_SCOPE`,
+  `RCLONE_CONFIG_GDRIVE_TOKEN`. Every pod you start from that template already has them.
+  Check in the web terminal: `echo $ORION_DRIVE_REMOTE` should print `gdrive:Orion`.
+* **Or a file:** paste the same lines into `/workspace/orion.env` (`nano /workspace/orion.env`).
+* Do NOT commit the token to git: it is a password to your whole Drive and stays in git history forever,
+  even in a private repo.
+
+Then:
 ```bash
-cd /workspace
-git clone <your-github-repo-url> Orion_Pipeline
-# upload your orion.env to /workspace/orion.env (RunPod file browser, or paste with nano)
-bash Orion_Pipeline/deploy/setup_runpod.sh      # ~15-30 min first time: installs, downloads, starts model, smoke-tests
-bash Orion_Pipeline/deploy/run_on_pod.sh --limit 1   # the 1-video test
+cd /workspace && git clone <your-github-repo-url> Orion_Pipeline
+bash Orion_Pipeline/go.sh --limit 1      # install everything + model + server + smoke test + the 1-video test
 ```
+`go.sh` stops in seconds if Drive is not configured. It installs ffmpeg, rclone, vLLM, faster-whisper, downloads
+the model (15-30 min the first time), starts the server, runs the smoke test, then starts the pipeline in the
+background. It is safe to run again on a new or restarted pod: it skips what is already installed and the
+pipeline resumes from Drive. (`deploy/setup_runpod.sh` and `deploy/run_on_pod.sh` are the two halves, if you
+ever want them separately.)
+
 When the 1-video test looks right (`watch -n 10 /workspace/venv/bin/python Orion_Pipeline/deploy/status.py`),
 run everything that's left:
 ```bash
-bash Orion_Pipeline/deploy/run_on_pod.sh
+bash Orion_Pipeline/go.sh
 ```
 It runs in the background, so closing the terminal doesn't stop it. Follow with `tail -f /workspace/orion_run.log`.
 
@@ -68,7 +83,7 @@ stage, and inside Stage C continue from the first model call not yet saved.
   Bundles without one are skipped, not run.
 * 3 videos failing in a row stops the batch (model server down?) instead of burning GPU time.
 * Drive sync failures are retried and logged to `OUTPUT/_sync_errors.log`; they never crash a run.
-* `_data_quality.json` flags truncated transcripts (e.g. A18 ending at 600 s of a 1208 s video).
+* `_data_quality.json` flags transcripts that cover little of the video (e.g. ending at 600 s of a 1208 s video).
 
 ## What is NOT proven (be honest with yourself before the first paid run)
 
