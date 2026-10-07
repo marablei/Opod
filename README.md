@@ -1,49 +1,51 @@
-# Orion Pipeline — Semantic Reasoning Sub-Pipeline
+# Orion Pipeline 1: video -> SFT training data
 
-Replaces Gemini with self-hosted Qwen3-Omni-30B-A3B-Instruct for Pipeline 1's
-semantic reasoning stage. Produces 4 SFT training datasets (Director, Style,
-Footage, Story Architect) from source video + A01-A30 deterministic agent
-outputs.
+Turns source videos into 4 SFT datasets (Director, Style, Footage, Story Architect) for LoRA
+fine-tuning. **Input is only the video file.** No agent (A01-A30) files are used.
+
+A self-hosted Qwen3-Omni-30B-A3B-Instruct (4-bit AWQ by default) watches and listens to each video.
+Everything is saved to Google Drive after every step, so a lost GPU can be replaced and the run resumes.
 
 ## Stages
-- **Stage A** — Unified DNA merge (A01-A30 → one structured timeline per video)
-- **Stage B** — Chunking (segment-level + whole-video views)
-- **Stage C** — Qwen3-Omni inference (video clip + evidence → raw reasoning)
-- **Stage D** — Semantic Judge (rule-based grounding check)
-- **Stage E** — Dataset Extractor (validated reasoning → SFT JSONL shards)
-- **Stage F** — SFT QA gate
-- **Stage G** — Corpus Aggregation (per-video shards → 4 final training files)
+- **A** `pipeline/stage_a_unified_dna.py` + `pipeline/self_extract.py`: ffprobe (duration/fps/size),
+  ffmpeg shot cuts, faster-whisper transcript with timestamps -> `00_self_extract.json`, `01_unified_dna.json`
+- **B** `stage_b_chunking.py`: chunks of up to 75 s, cut at speech pauses (fixed windows if no speech)
+- **C** `omni_client/stage_c_omni.py`: per chunk, video clip + audio + evidence text -> Qwen3-Omni
+  (Director, Footage); sampled frames -> Style, Story. Every call is cached for resume.
+- **D** `stage_d_judge.py`: rule-based ID/structure checks only. It does NOT verify that claims are true.
+- **E** `stage_e_dataset_extractor.py`: builds SFT rows with the text-only student system prompt
+- **F** `stage_f_sft_qa.py`: rejects placeholders/malformed/duplicates; holds back Footage rows whose
+  candidate pool is empty (kept in `.pre_qa`, nothing deleted)
+- **G** `stage_g_aggregate.py`: joins all videos into 4 final `*_sft.jsonl` files
 
-## Status
-Scaffolding in progress. Stage A's real parser is pending inspection of the
-actual A01-A30 file structure (hardlink issue blocking direct read as of this
-commit — see `docs/data_structure_notes.md` once filled in).
+## Run it
+See `deploy/README_RUNPOD.md` (rent a 48 GB GPU, `setup_runpod.sh`, then `run_on_pod.sh --limit 1`).
+Test without a GPU: `python tests/simulate_gpu_loss.py --backend folder` (fake data, mock server).
 
 ## Layout
 ```
-orion_pipeline/
-  pipeline/          # Stages A, B, D, E, F, G — pure Python, no GPU
-  omni_client/       # Stage C — client that calls the Omni model server
-  orchestrator/       # run_pipeline.py — 1-click, checkpointed, resumable
-  docs/
-  requirements.txt
+pipeline/        stages A, B, D, E, F, G + self_extract (no GPU needed except Whisper)
+omni_client/     Stage C client + prompts
+orchestrator/    run_pipeline.py (resumable), drive_sync.py, preflight.py, state.py, progress.py
+deploy/          RunPod scripts, smoke test, orion.env.example
+tests/           fake-data simulation (mock vLLM, fake rclone, stub Whisper)
+INPUT/ OUTPUT/   data folders (contents are git-ignored)
 ```
 
-## Model roles (the LLM approach)
+## Model roles
 
-| Role | Base model | Trained? | Where it runs in this repo |
+| Role | Base model | Trained? | Where |
 |---|---|---|---|
 | Teacher: watches video + reads evidence | Qwen3-Omni-30B-A3B-Instruct | No, inference only | Stage C |
-| Director / Style / Footage adapters | Qwen3-30B-A3B (text-only) | LoRA fine-tune x3 | trained later on the SFT files this repo produces |
-| After Effects / Premiere / Blender adapters | Qwen3-Coder-30B-A3B-Instruct | LoRA fine-tune x3 | Pipeline 2, not in this repo yet |
+| Director / Style / Footage adapters | Qwen3-30B-A3B (text-only) | LoRA x3 | trained later on this repo's output |
+| After Effects / Premiere / Blender adapters | Qwen3-Coder-30B-A3B-Instruct | LoRA x3 | Pipeline 2, not here |
 
-Consequences built into the code:
-* Teacher prompts (Stage C) mention the video and say "trust what you see over the evidence".
-* The system prompt stored in each SFT row is the text-only STUDENT prompt (`omni_client/prompts.py:
-  STUDENT_SYSTEM`), because the student never sees a video. The user text is identical to the teacher's.
-* Footage rows with an empty candidate pool are held back by Stage F (they would teach the adapter to
-  reject everything). They are logged and kept in `.pre_qa`, never deleted.
-  `ORION_ALLOW_EMPTY_CANDIDATES=1` overrides.
-* No A-file agents: duration, shot cuts and the transcript come from the video itself
-  (`pipeline/self_extract.py`: ffprobe + ffmpeg + faster-whisper). `ORION_USE_AGENTS=1` restores the old behaviour.
-* A Story Architect dataset is also produced (4th file); it is not in the 3-adapter list above. Open question.
+* Teacher prompts mention the video and say to trust what it sees over the evidence text.
+* Stored SFT rows use the text-only STUDENT prompt (`omni_client/prompts.py: STUDENT_SYSTEM`).
+* Footage rows are held back until the Python retrieval layer (later) gives real candidates.
+  `ORION_ALLOW_EMPTY_CANDIDATES=1` overrides. `ORION_USE_AGENTS=1` restores the old agent mode.
+* Story Architect is produced as a 4th file; whether it becomes an adapter is an open question.
+
+## Not proven yet
+Real GPU, real Whisper, the exact Qwen3-Omni video+audio request format under vLLM, real Drive,
+and the quality of the 4-bit teacher. The one-video test on the pod checks these.

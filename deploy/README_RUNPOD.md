@@ -40,7 +40,7 @@ listens. (Set `ORION_USE_AGENTS=1` only if you ever want the old agent files use
 
 ```bash
 cd /workspace
-git clone <your-repo-url> Orion_Pipeline        # (repo not on GitHub yet: see note below)
+git clone <your-github-repo-url> Orion_Pipeline
 # upload your orion.env to /workspace/orion.env (RunPod file browser, or paste with nano)
 bash Orion_Pipeline/deploy/setup_runpod.sh      # ~15-30 min first time: installs, downloads, starts model, smoke-tests
 bash Orion_Pipeline/deploy/run_on_pod.sh --limit 1   # the 1-video test
