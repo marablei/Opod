@@ -183,12 +183,15 @@ def _parse_json_loose(text: str) -> dict:
     t = (text or "").strip()
     t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.IGNORECASE)
     try:
-        return json.loads(t)
+        obj = json.loads(t)
     except json.JSONDecodeError:
         m = re.search(r"\{.*\}", t, flags=re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
-        raise
+        if not m:
+            raise
+        obj = json.loads(m.group(0))
+    if not isinstance(obj, dict):  # a bare list/string would crash later; retry instead
+        raise json.JSONDecodeError("model returned JSON that is not an object", t, 0)
+    return obj
 
 
 def build_payload(
@@ -320,7 +323,8 @@ def run(video_input_dir: Path, video_out_dir: Path):
             ("director", build_director_prompt, director_results),
             ("footage", build_footage_prompt, footage_results),
         ):
-            key = f"{label}__{cid}"
+            # key includes the chunk's time range: if chunking ever changes, stale answers are NOT reused
+            key = f"{label}__{cid}__{int(chunk['start_sec'] * 1000)}_{int(chunk['end_sec'] * 1000)}"
             result = cache.get(key)
             if result is not None:
                 cache_hits += 1

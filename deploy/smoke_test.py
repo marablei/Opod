@@ -45,3 +45,13 @@ print("model answered:", out)
 if not isinstance(out, dict) or not out:
     print("✗ empty/non-dict answer"); sys.exit(1)
 print("✓ multimodal request works (video + audio + JSON)")
+
+# Style/Story calls send several frames in ONE request - confirm the server allows that many images.
+frames = c.sample_frames(src, c.STYLE_STORY_FRAME_COUNT, tmp / "frames", 4.0)
+try:
+    out2 = c._live_call(system, 'Respond as {"frames_seen": <number of images you received>}', None, None, frames)
+except Exception as e:
+    print(f"✗ MULTI-IMAGE REQUEST FAILED ({len(frames)} images): {e}")
+    print("  Likely vLLM's per-prompt media limit. Restart with VLLM_EXTRA_ARGS set per `vllm serve --help | grep limit-mm`.")
+    sys.exit(1)
+print(f"✓ {len(frames)}-image request works:", out2)
