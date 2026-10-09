@@ -32,12 +32,15 @@ class H(BaseHTTPRequestHandler):
         parts = body["messages"][1]["content"]
         types = [p["type"] for p in parts]
         text = parts[-1]["text"]
-        if "documentary editor" in system:
+        if "describe media" in system:  # deploy/smoke_test.py
+            kind = "smoke"
+            out = {"video": "test pattern", "audio": "tone", "frames_seen": types.count("image_url")}
+        elif "documentary editor" in system:
             kind = "director"
             out = {"editorial_function": "context", "treatment": "b-roll over narration",
                    "footage_need": {"query": "wall street trading floor", "duration_sec": 4},
                    "audio_need": {"query": "tense low strings, no vocals", "duration_sec": 12, "type": "music"},
-                   "reasoning": "narration introduces a new actor"}
+                   "reasoning": "narration introduces a new actor (\u0627\u0644\u0631\u0627\u0648\u064a)"}
         elif "footage researcher" in system:
             kind = "footage"
             out = {"decision": "reject_pool", "confirmed_asset_ids": [], "rejected_asset_ids": [],
@@ -52,9 +55,9 @@ class H(BaseHTTPRequestHandler):
             pt = lambda i: {"segment_id": i, "function": "f", "note": "n"}
             out = {"act_1_hook": pt(ids[0]), "act_1_anchor": pt(ids[1]), "act_2_escalation": [pt(ids[len(ids) // 2])],
                    "act_3_payoff": pt(ids[-2]), "act_3_closing": pt(ids[-1])}
-        with open(args.log, "a") as f:
-            f.write(json.dumps({"n": calls, "kind": kind, "parts": types}) + "\n")
-        resp = json.dumps({"choices": [{"message": {"content": json.dumps(out)}}]}).encode()
+        with open(args.log, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"n": calls, "kind": kind, "parts": types}, ensure_ascii=False) + "\n")
+        resp = json.dumps({"choices": [{"message": {"content": json.dumps(out, ensure_ascii=False)}}]}, ensure_ascii=False).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
         self.wfile.write(resp)
 

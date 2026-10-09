@@ -114,7 +114,7 @@ class DriveSync:
     def _log_error(self, msg: str):
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-            with open(self.output_dir / "_sync_errors.log", "a") as f:
+            with open(self.output_dir / "_sync_errors.log", "a", encoding="utf-8") as f:
                 f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
         except OSError:
             pass

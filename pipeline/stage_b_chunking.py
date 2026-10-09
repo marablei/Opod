@@ -115,11 +115,12 @@ def run(video_input_dir: Path, video_out_dir: Path):
     dna_path = video_out_dir / "stage_a_extract" / "unified_dna.json"
     if not dna_path.exists():
         raise FileNotFoundError(f"Stage A output not found: {dna_path}. Run Stage A first.")
-    dna = json.loads(dna_path.read_text())
+    dna = json.loads(dna_path.read_text(encoding="utf-8"))
 
     chunks_dir = video_out_dir / "stage_b_chunks"
     chunks_dir.mkdir(parents=True, exist_ok=True)
 
+    lang_code = (dna.get("language") or {}).get("code")
     shots = dna.get("shots", [])
     transcript = dna.get("transcript", [])
     ocr_regions = dna.get("ocr_text_regions", [])
@@ -155,9 +156,10 @@ def run(video_input_dir: Path, video_out_dir: Path):
             "objects": chunk_objects,
             "asset_roles": chunk_assets,
             "evidence_available": dna.get("evidence_available", {}),
+            "language": lang_code,
         })
 
-    (chunks_dir / "segment_chunks.json").write_text(json.dumps(segment_chunks, indent=2))
+    (chunks_dir / "segment_chunks.json").write_text(json.dumps(segment_chunks, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # --- View 2: channel-level rollup (whole video) ---
     style_rollup = {
@@ -165,6 +167,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
         "duration_sec": dna.get("source", {}).get("duration_sec"),
         "dna": dna.get("dna", {}),
         "evidence_available": dna.get("evidence_available", {}),
+        "language": lang_code,
         "style_tags": dna.get("style_tags", []),
         "counts": {
             "num_scenes": len(dna.get("scenes", [])),
@@ -176,15 +179,16 @@ def run(video_input_dir: Path, video_out_dir: Path):
             "num_asset_roles": len(asset_roles),
         },
     }
-    (chunks_dir / "style_rollup.json").write_text(json.dumps(style_rollup, indent=2))
+    (chunks_dir / "style_rollup.json").write_text(json.dumps(style_rollup, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # --- View 3: whole-transcript view (no chunking) ---
     story_input = {
         "video_id": dna.get("video_id"),
         "duration_sec": dna.get("source", {}).get("duration_sec"),
+        "language": lang_code,
         "transcript": transcript,
     }
-    (chunks_dir / "story_input.json").write_text(json.dumps(story_input, indent=2))
+    (chunks_dir / "story_input.json").write_text(json.dumps(story_input, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {
         "segment_chunks": chunks_dir / "segment_chunks.json",

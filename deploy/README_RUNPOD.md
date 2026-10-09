@@ -131,3 +131,16 @@ Google sign-in itself needs a human once (browser consent, ~2 min). After that n
 
 Risk: the token reaches your whole Drive. Encryption protects it only as well as the passphrase; if leaked,
 revoke at https://myaccount.google.com/permissions and redo step 1.
+
+## Languages (Arabic and others)
+
+- Speech-to-text is Whisper `large-v3` (multilingual; the faster `-turbo` is weaker on several non-English languages).
+- Language is auto-detected per video (looks at 4 windows, not just the first 30 s) and stored in
+  `stage_a_extract/self_extract.json` and `_data_quality.json`. A low-confidence detection prints a `[data-quality]` warning.
+- Wrong or unsure? Put a file `language.txt` containing just `ar` (or `en`, ...) next to that video, or set
+  `ORION_LANGUAGE=ar` for everything, then re-run (delete the video's `stage_a_extract` folder to redo Stage A).
+- Transcripts, quotes and on-screen text stay in the ORIGINAL language. Everything the model WRITES (reasoning, search
+  queries) is English, because footage/music libraries are searched in English. Training rows store Arabic as real
+  characters (not `\uXXXX` escapes). All files are read/written as UTF-8.
+- Not proven: Whisper's Arabic accuracy on dialects/music-heavy audio, Qwen3-Omni (4-bit) Arabic quality, and
+  mixed-language videos (`ORION_WHISPER_MULTILINGUAL=1` is available but untested). Check the first Arabic rows by eye.

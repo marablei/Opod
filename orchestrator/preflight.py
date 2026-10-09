@@ -23,6 +23,7 @@ REQUIRED_AGENTS = ["A18"]
 # Used if present; absence only produces a warning.
 EXPECTED_AGENTS = ["A03", "A05", "A06", "A07", "A09", "A19", "A24", "A26", "A28"]
 
+LOW_LANG_CONFIDENCE = float(os.environ.get("ORION_LOW_LANG_CONFIDENCE", "0.80"))
 MIN_TRANSCRIPT_COVERAGE = 0.90
 
 
@@ -57,7 +58,7 @@ def quality_report(video_out_dir: Path) -> dict:
     """Written to <video>/_data_quality.json after Stage A. Never raises."""
     report = {"warnings": []}
     try:
-        dna = json.loads((video_out_dir / "stage_a_extract" / "unified_dna.json").read_text())
+        dna = json.loads((video_out_dir / "stage_a_extract" / "unified_dna.json").read_text(encoding="utf-8"))
         duration = (dna.get("source") or {}).get("duration_sec") or 0.0
         transcript = dna.get("transcript", [])
         last_end = max((t.get("end_sec", 0.0) for t in transcript), default=0.0)
@@ -78,9 +79,21 @@ def quality_report(video_out_dir: Path) -> dict:
                 f"transcript only covers {coverage:.0%} of the video "
                 f"(ends at {last_end:.0f}s of {duration:.0f}s) — likely truncated A18 run"
             )
+        lang = dna.get("language") or {}
+        report["language"] = lang.get("code")
+        report["language_probability"] = lang.get("probability")
+        report["language_source"] = lang.get("source")
+        prob = lang.get("probability")
+        if transcript and lang.get("source") == "auto-detect":
+            if not lang.get("code"):
+                report["warnings"].append("spoken language could not be detected")
+            elif prob is not None and prob < LOW_LANG_CONFIDENCE:
+                report["warnings"].append(
+                    f"language detection unsure: '{lang.get('code')}' at {prob:.0%} - check the transcript; "
+                    f"if wrong, put the right code (e.g. ar) in a language.txt next to the video and re-run Stage A")
         if report["shots"] == 0:
             report["warnings"].append("no shots detected")
     except Exception as e:  # report must never break the run
         report["warnings"].append(f"quality report failed: {e}")
-    (video_out_dir / "_data_quality.json").write_text(json.dumps(report, indent=2))
+    (video_out_dir / "_data_quality.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return report

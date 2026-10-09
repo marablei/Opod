@@ -24,6 +24,11 @@ from orchestrator.state import STAGES  # noqa: E402
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):  # Arabic video names must not crash a Windows console
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--stages", required=True, help="folder with one subfolder per video (the 'Each stage' folder)")
     ap.add_argument("--out", default="", help="where to write the 4 final files (default: next to --stages, in 'final_sft')")
@@ -44,7 +49,7 @@ def main():
             skipped.append((d.name, "no stage_f_final folder"))
             continue
         try:
-            st = json.loads((d / "_state.json").read_text())
+            st = json.loads((d / "_state.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             st = {}
         if not a.include_unfinished and not all(st.get(s) == "done" for s in STAGES):
@@ -52,17 +57,9 @@ def main():
             continue
         vids.append(d.name)
 
-    out.mkdir(parents=True, exist_ok=True)
-    # Stage G reads <run_dir>/<video>/stage_f_final and writes the 4 files into run_dir; use a staging
-    # view so the stages folder itself is never written to.
-    import tempfile, os
-    with tempfile.TemporaryDirectory() as tmp:
-        view = Path(tmp)
-        for v in vids:
-            os.symlink(stages / v, view / v)
-        stage_g_aggregate.run(run_dir=view, video_ids=vids)
-        for name in stage_g_aggregate.SFT_NAMES:
-            (out / name).write_bytes((view / name).read_bytes())
+    # Stage G reads <stages>/<video>/stage_f_final and writes ONLY into --out, so the stages folder
+    # is never touched (and no symlinks are needed: they fail on Windows without admin rights).
+    stage_g_aggregate.run(run_dir=stages, video_ids=vids, out_dir=out)
     print(f"\n{len(vids)} videos aggregated -> {out}")
     for v, why in skipped:
         print(f"  skipped {v}: {why}")

@@ -28,7 +28,7 @@ from pipeline import self_extract as se
 try:
     info = se.probe(src)
     shots = se.detect_shots(src, info["duration_sec"])
-    segs = se.transcribe(src)  # synthetic tone has no speech: zero segments is the expected, healthy answer
+    segs, lang = se.transcribe(src)  # synthetic tone has no speech: zero segments is the expected, healthy answer
     print(f"self-extract OK: duration {info['duration_sec']}s, {len(shots)} shot(s), {len(segs)} speech segment(s)")
 except Exception as e:
     print(f"✗ SELF-EXTRACT FAILED (Whisper/ffmpeg): {e}")

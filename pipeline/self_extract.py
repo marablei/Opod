@@ -30,7 +30,16 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 
 SCENE_THRESHOLD = float(os.environ.get("ORION_SCENE_THRESHOLD", "0.30"))
 MIN_SHOT_SEC = float(os.environ.get("ORION_MIN_SHOT_SEC", "0.5"))
-WHISPER_MODEL = os.environ.get("ORION_WHISPER_MODEL", "large-v3-turbo")
+# large-v3 (not -turbo): turbo is faster but is known to be weaker on several non-English
+# languages; this corpus is multilingual (mostly Arabic), so accuracy comes first.
+WHISPER_MODEL = os.environ.get("ORION_WHISPER_MODEL", "large-v3")
+# Spoken language: "auto" (Whisper detects it) or a code like "ar" / "en" to force it for every video.
+# A file named language.txt next to a video (containing just the code) overrides this for that video.
+LANGUAGE = os.environ.get("ORION_LANGUAGE", "auto").strip().lower() or "auto"
+# Videos that switch language mid-way (e.g. Arabic with English quotes): ask Whisper to re-detect per
+# segment. Needs faster-whisper >= 1.1; unproven on our data, so OFF by default.
+MULTILINGUAL = os.environ.get("ORION_WHISPER_MULTILINGUAL", "0") == "1"
+LOW_LANG_CONFIDENCE = float(os.environ.get("ORION_LOW_LANG_CONFIDENCE", "0.80"))
 # "whisper" (default) | "none" (skip speech-to-text; chunks become fixed windows)
 TRANSCRIBE = os.environ.get("ORION_TRANSCRIBE", "whisper")
 
@@ -99,11 +108,25 @@ def pacing_from_shots(shots: list[dict], duration_sec: float) -> dict:
     }
 
 
-def transcribe(video: Path) -> list[dict]:
-    """Speech segments [{id, start_sec, end_sec, text, words:[{word,start_sec,end_sec}]}].
+def pick_language(video_input_dir: Path) -> tuple[str | None, str]:
+    """(language code or None for auto-detect, where it came from)."""
+    side = video_input_dir / "language.txt"
+    if side.exists():
+        code = side.read_text(encoding="utf-8").strip().lower()
+        if code and code != "auto":
+            return code, "language.txt"
+    if LANGUAGE != "auto":
+        return LANGUAGE, "ORION_LANGUAGE"
+    return None, "auto-detect"
+
+
+def transcribe(video: Path, language: str | None = None) -> tuple[list[dict], dict]:
+    """Returns (segments, language_info).
+    segments: [{id, start_sec, end_sec, text, words:[{word,start_sec,end_sec}]}] in the ORIGINAL spoken language.
+    language_info: {"code", "probability", "multilingual"}.
     Fails loudly if faster-whisper is missing, instead of silently returning nothing."""
     if TRANSCRIBE == "none":
-        return []
+        return [], {"code": language, "probability": None, "multilingual": False}
     try:
         from faster_whisper import WhisperModel
     except ImportError as e:
@@ -112,10 +135,22 @@ def transcribe(video: Path) -> list[dict]:
             "or set ORION_TRANSCRIBE=none to skip speech-to-text.") from e
 
     model = _load_whisper(WhisperModel)
-    segments, _info = model.transcribe(
-        str(video), word_timestamps=True, vad_filter=True, beam_size=5,
+    kwargs = dict(
+        word_timestamps=True, vad_filter=True, beam_size=5,
         condition_on_previous_text=False,  # long-form: avoids repetition loops / early stop
+        language=language,                 # None = auto-detect
     )
+    if language is None:
+        # look at several windows, not just the first 30 s (videos often open with music)
+        kwargs.update(language_detection_segments=4, language_detection_threshold=0.5)
+    if MULTILINGUAL:
+        kwargs["multilingual"] = True
+    try:
+        segments, info = model.transcribe(str(video), **kwargs)
+    except TypeError:  # older faster-whisper without those options
+        for k in ("language_detection_segments", "language_detection_threshold", "multilingual"):
+            kwargs.pop(k, None)
+        segments, info = model.transcribe(str(video), **kwargs)
     out = []
     for i, seg in enumerate(segments, start=1):
         text = (seg.text or "").strip()
@@ -129,7 +164,13 @@ def transcribe(video: Path) -> list[dict]:
             "words": [{"word": w.word, "start_sec": round(float(w.start), 3), "end_sec": round(float(w.end), 3)}
                       for w in (getattr(seg, "words", None) or [])],
         })
-    return out
+    lang_info = {
+        "code": language or getattr(info, "language", None),
+        "probability": None if language else (round(float(info.language_probability), 3)
+                                              if getattr(info, "language_probability", None) is not None else None),
+        "multilingual": MULTILINGUAL,
+    }
+    return out, lang_info
 
 
 _whisper_cache = {}
@@ -161,8 +202,8 @@ def run(video_input_dir: Path, video_out_dir: Path) -> dict:
     cache = video_out_dir / "stage_a_extract" / "self_extract.json"
     if cache.exists():
         try:
-            data = json.loads(cache.read_text())
-            if {"source", "shots", "transcript"} <= set(data):
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            if {"source", "shots", "transcript", "language"} <= set(data):
                 return data
         except json.JSONDecodeError:
             pass  # half-written: redo
@@ -171,8 +212,14 @@ def run(video_input_dir: Path, video_out_dir: Path) -> dict:
     source = probe(video)
     duration = source.get("duration_sec") or 0.0
     shots = detect_shots(video, duration) if duration else []
-    transcript = transcribe(video) if source.get("has_audio", True) else []
+    forced, lang_source = pick_language(video_input_dir)
+    if source.get("has_audio", True):
+        transcript, lang = transcribe(video, forced)
+    else:
+        transcript, lang = [], {"code": forced, "probability": None, "multilingual": False}
+    lang["source"] = lang_source
     data = {
+        "language": lang,
         "source": source,
         "shots": shots,
         "transcript": transcript,
@@ -181,6 +228,6 @@ def run(video_input_dir: Path, video_out_dir: Path) -> dict:
                      "whisper_model": WHISPER_MODEL if TRANSCRIBE != "none" else None},
     }
     tmp = cache.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2))
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(cache)
     return data

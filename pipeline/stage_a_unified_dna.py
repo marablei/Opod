@@ -101,6 +101,7 @@ def _probe_duration(video_input_dir: Path):
 def run(video_input_dir: Path, video_out_dir: Path):
     video_out_dir.mkdir(parents=True, exist_ok=True)
 
+    language = {}  # filled from self_extract (spoken language of the video)
     all_tags = [p.stem.replace("P1_", "") for p in sorted(video_input_dir.glob("P1_A*.jsonl"))] if _agents_on() else []
     known_tags = {
         "A03", "A05", "A06", "A07", "A09", "A18", "A19", "A24", "A26", "A28",
@@ -214,6 +215,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
         shots = se["shots"]
         transcript = se["transcript"]
         dna = {"pacing": se["pacing"]} if se.get("pacing") else {}
+        language = se.get("language") or {}
 
     evidence_available = {
         "shots": bool(shots) or _has("A06"),
@@ -229,6 +231,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
     unified = {
         "video_id": video_id,
         "evidence_available": evidence_available,
+        "language": language,
         "source": source_info,
         "dna": dna,
         "shots": shots,
@@ -244,5 +247,5 @@ def run(video_input_dir: Path, video_out_dir: Path):
 
     out_path = video_out_dir / "stage_a_extract" / "unified_dna.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(unified, indent=2))
+    out_path.write_text(json.dumps(unified, indent=2, ensure_ascii=False), encoding="utf-8")
     return out_path

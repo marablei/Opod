@@ -65,7 +65,7 @@ def _gate_shard(in_path: Path, out_path: Path, log_path: Path, shard_name: str) 
         return {"kept": 0, "total": 0}
 
     rows = []
-    with open(in_path) as f:
+    with open(in_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -76,20 +76,20 @@ def _gate_shard(in_path: Path, out_path: Path, log_path: Path, shard_name: str) 
     for row in rows:
         ok, reason = _qa_check(row, shard_name)
         if not ok:
-            with open(log_path, "a") as f:
+            with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"[{shard_name}] rejected: {reason}\n")
             continue
-        key = json.dumps(row, sort_keys=True)
+        key = json.dumps(row, sort_keys=True, ensure_ascii=False)
         if key in seen:
-            with open(log_path, "a") as f:
+            with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"[{shard_name}] rejected: exact duplicate\n")
             continue
         seen.add(key)
         kept.append(row)
 
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         for row in kept:
-            f.write(json.dumps(row) + "\n")
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     return {"kept": len(kept), "total": len(rows)}
 
@@ -106,14 +106,14 @@ def run(video_input_dir: Path, video_out_dir: Path):
 
     log_path = out_dir / "_qa_rejections.log"
     # Never delete an earlier log: append a run header so every run stays visible.
-    with open(log_path, "a") as _f:
+    with open(log_path, "a", encoding="utf-8") as _f:
         _f.write(f"\n=== Stage F run {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 
     results = {}
     for shard in ["director_sft", "footage_sft", "style_sft", "story_architect_sft"]:
         results[shard] = _gate_shard(in_dir / f"{shard}.jsonl", out_dir / f"{shard}.jsonl", log_path, shard)
         if not (in_dir / f"{shard}.jsonl").exists():
-            (out_dir / f"{shard}.jsonl").write_text("")  # keep the 4 files present for every finished video
+            (out_dir / f"{shard}.jsonl").write_text("", encoding="utf-8")  # keep the 4 files present for every finished video
     (out_dir / "_qa_report.json").write_text(json.dumps(
-        {"finished_at": time.strftime("%Y-%m-%d %H:%M:%S"), "shards": results}, indent=2))
+        {"finished_at": time.strftime("%Y-%m-%d %H:%M:%S"), "shards": results}, indent=2, ensure_ascii=False), encoding="utf-8")
     return results

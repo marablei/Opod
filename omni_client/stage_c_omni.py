@@ -228,7 +228,7 @@ def build_payload(
 
 def _live_call(system_prompt, user_content, video_clip_path, audio_path, frame_paths) -> dict:
     payload = build_payload(system_prompt, user_content, video_clip_path, audio_path, frame_paths)
-    data = json.dumps(payload).encode()
+    data = json.dumps(payload, ensure_ascii=False).encode()
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -265,7 +265,7 @@ class _Cache:
         p = self.dir / f"{key}.json"
         if p.exists():
             try:
-                return json.loads(p.read_text())
+                return json.loads(p.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 return None  # half-written file from a crash: just redo that call
         return None
@@ -274,7 +274,7 @@ class _Cache:
         if not self.enabled:
             return
         tmp = self.dir / f"{key}.json.tmp"
-        tmp.write_text(json.dumps(value))
+        tmp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.dir / f"{key}.json")  # atomic: never leaves a torn file
         if CHECKPOINT_HOOK is not None:
             try:
@@ -288,9 +288,9 @@ def run(video_input_dir: Path, video_out_dir: Path):
     if not chunks_dir.exists():
         raise FileNotFoundError(f"Stage B output not found: {chunks_dir}. Run Stage B first.")
 
-    segment_chunks = json.loads((chunks_dir / "segment_chunks.json").read_text())
-    style_rollup = json.loads((chunks_dir / "style_rollup.json").read_text())
-    story_input = json.loads((chunks_dir / "story_input.json").read_text())
+    segment_chunks = json.loads((chunks_dir / "segment_chunks.json").read_text(encoding="utf-8"))
+    style_rollup = json.loads((chunks_dir / "style_rollup.json").read_text(encoding="utf-8"))
+    story_input = json.loads((chunks_dir / "story_input.json").read_text(encoding="utf-8"))
 
     out_dir = video_out_dir / "stage_c_omni"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -362,10 +362,10 @@ def run(video_input_dir: Path, video_out_dir: Path):
     else:
         cache_hits += 1
 
-    (out_dir / "director_raw.json").write_text(json.dumps(director_results, indent=2))
-    (out_dir / "footage_raw.json").write_text(json.dumps(footage_results, indent=2))
-    (out_dir / "style_raw.json").write_text(json.dumps(style_result, indent=2))
-    (out_dir / "story_architect_raw.json").write_text(json.dumps(story_result, indent=2))
+    (out_dir / "director_raw.json").write_text(json.dumps(director_results, indent=2, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "footage_raw.json").write_text(json.dumps(footage_results, indent=2, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "style_raw.json").write_text(json.dumps(style_result, indent=2, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "story_architect_raw.json").write_text(json.dumps(story_result, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {
         "mode": MODE,

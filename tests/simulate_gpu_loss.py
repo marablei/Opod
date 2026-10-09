@@ -24,6 +24,7 @@ REPO = Path(__file__).resolve().parent.parent
 ap = argparse.ArgumentParser()
 ap.add_argument("--backend", default="folder", choices=["folder", "rclone", "ids"])
 ap.add_argument("--fixture", default="", help="folder of P1_A*.jsonl to include AND use (sets ORION_USE_AGENTS=1). Default: no agent files at all.")
+ap.add_argument("--lang", default="en", help="spoken language the stub Whisper reports (ar = Arabic text through the whole pipeline)")
 ap.add_argument("--fail-after", type=int, default=30)
 args = ap.parse_args()
 
@@ -56,7 +57,7 @@ for v in ("video_001", "video_002"):
     shutil.copy(vid, d / "video.mp4")
 print(f"built 2 inputs ({'1 loose file + 1 subfolder' if IDS else 'subfolders'})")
 
-extra_env = {}
+extra_env = {"STUB_LANG": args.lang}
 remote = str(DRIVE)
 if args.backend in ("rclone", "ids"):
     shim = W / "bin"; shim.mkdir()
@@ -67,19 +68,19 @@ if args.backend in ("rclone", "ids"):
     else:
         STG_DIR.mkdir(parents=True, exist_ok=True); SFT_DIR.mkdir(parents=True, exist_ok=True)
         remote = ""
-        extra_env = {"ORION_DRIVE_INPUT_ID": "IDIN", "ORION_DRIVE_STAGES_ID": "IDSTAGES", "ORION_DRIVE_SFT_ID": "IDSFT"}
+        extra_env.update({"ORION_DRIVE_INPUT_ID": "IDIN", "ORION_DRIVE_STAGES_ID": "IDSTAGES", "ORION_DRIVE_SFT_ID": "IDSFT"})
     extra_env.update({"PATH": f"{shim}:{os.environ['PATH']}", "FAKE_RCLONE_ROOT": str(root)})
 
 
 def mock(fail_after):
-    LOG.write_text("")
+    LOG.write_text("", encoding="utf-8")
     p = subprocess.Popen([sys.executable, str(REPO / "tests/mock_vllm.py"), "--port", str(PORT),
                           "--log", str(LOG), "--fail-after", str(fail_after)])
     time.sleep(1.0); return p
 
 
 def calls():
-    return [json.loads(l) for l in LOG.read_text().splitlines() if l.strip()]
+    return [json.loads(l) for l in LOG.read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
 def run_pod(name, fail_after):
@@ -94,12 +95,12 @@ def run_pod(name, fail_after):
                         "--input", str(pod / "INPUT"), "--out", str(pod / "OUTPUT")],
                        env=env, capture_output=True, text=True)
     srv.terminate(); srv.wait()
-    (W / f"{name}.log").write_text(r.stdout + r.stderr)
+    (W / f"{name}.log").write_text(r.stdout + r.stderr, encoding="utf-8")
     return pod, r
 
 
 def state(v):
-    return json.loads((STG_DIR / v / "_state.json").read_text())
+    return json.loads((STG_DIR / v / "_state.json").read_text(encoding="utf-8"))
 
 
 fails = []
@@ -121,7 +122,7 @@ if not args.fixture:
     check((STG_DIR / "video_001/stage_a_extract/self_extract.json").exists(), "self-extracted transcript/shots saved to Drive (no A-files used)")
     check(not list(IN_DIR.rglob("P1_*")), "input bundle contains NO agent files")
 
-chunks = json.loads((STG_DIR / "video_001/stage_b_chunks/segment_chunks.json").read_text())
+chunks = json.loads((STG_DIR / "video_001/stage_b_chunks/segment_chunks.json").read_text(encoding="utf-8"))
 per_video = 2 * len(chunks) + 2
 print(f"  ({len(chunks)} chunks -> {per_video} model calls per video)")
 
@@ -141,19 +142,19 @@ check(not list(podB.rglob("*.tmp")), "no torn temp files")
 
 for name in ("director", "style", "footage", "story_architect"):
     f = SFT_DIR / f"{name}_sft.jsonl"
-    rows = [json.loads(l) for l in f.read_text().splitlines()] if f.exists() else []
+    rows = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines()] if f.exists() else []
     print(f"  final {name}_sft.jsonl on Drive: {len(rows)} rows")
-dir_rows = len((SFT_DIR / "director_sft.jsonl").read_text().splitlines())
+dir_rows = len((SFT_DIR / "director_sft.jsonl").read_text(encoding="utf-8").splitlines())
 check(dir_rows == 2 * len(chunks), f"director_sft has {dir_rows} rows = 2 videos x {len(chunks)} chunks")
-check(len((SFT_DIR / "story_architect_sft.jsonl").read_text().splitlines()) == 2, "story_architect_sft has 2 rows (grounded in real segment ids)")
-first = json.loads((SFT_DIR / "director_sft.jsonl").read_text().splitlines()[0])
+check(len((SFT_DIR / "story_architect_sft.jsonl").read_text(encoding="utf-8").splitlines()) == 2, "story_architect_sft has 2 rows (grounded in real segment ids)")
+first = json.loads((SFT_DIR / "director_sft.jsonl").read_text(encoding="utf-8").splitlines()[0])
 sysmsg = first["messages"][0]["content"].lower()
 check("video" not in sysmsg and "you have the actual" not in sysmsg, "stored training rows use the TEXT-ONLY student system prompt (no video mention)")
 check("video clip" in subprocess.run([sys.executable, "-c", "import sys;sys.path.insert(0,'.');from omni_client.prompts import DIRECTOR_SYSTEM as d;print(d)"], capture_output=True, text=True, cwd=REPO).stdout.lower(), "teacher (Omni) prompt still tells it about the video")
-foot = (SFT_DIR / "footage_sft.jsonl").read_text().strip()
+foot = (SFT_DIR / "footage_sft.jsonl").read_text(encoding="utf-8").strip()
 check(foot == "", "Footage rows with an EMPTY candidate pool are held back (0 rows in footage_sft)")
-check(any("empty candidate pool" in l for l in (STG_DIR / "video_001/stage_f_final/_qa_rejections.log").read_text().splitlines()), "...and the reason is logged")
-check(len((STG_DIR / "video_001/stage_e_sft/footage_sft.jsonl").read_text().splitlines()) == len(chunks), "...and nothing is deleted: the pre-QA footage rows are still on Drive")
+check(any("empty candidate pool" in l for l in (STG_DIR / "video_001/stage_f_final/_qa_rejections.log").read_text(encoding="utf-8").splitlines()), "...and the reason is logged")
+check(len((STG_DIR / "video_001/stage_e_sft/footage_sft.jsonl").read_text(encoding="utf-8").splitlines()) == len(chunks), "...and nothing is deleted: the pre-QA footage rows are still on Drive")
 check((podB / "INPUT/video_001" / VID_NAME["video_001"]).exists(), "input videos are KEPT on the pod (nothing deleted)")
 check(((IN_DIR / "video_001.mp4") if IDS else (IN_DIR / "video_001/video.mp4")).exists(), "Drive INPUT untouched")
 
@@ -174,6 +175,22 @@ r2 = subprocess.run([sys.executable, str(REPO / "orchestrator/aggregate_offline.
 check(r2.returncode == 0, "offline aggregation ran (no GPU, no model)")
 for n in ("director", "style", "footage", "story_architect"):
     check((off / f"{n}_sft.jsonl").read_bytes() == (SFT_DIR / f"{n}_sft.jsonl").read_bytes(), f"offline {n}_sft.jsonl is identical to the batch result")
+
+# --- language / Unicode ---
+import json as _json
+se = _json.loads((STG_DIR / "video_001/stage_a_extract/self_extract.json").read_text(encoding="utf-8"))
+check(se["language"]["code"] == args.lang, f"detected spoken language recorded: {se['language']}")
+dq = _json.loads((STG_DIR / "video_001/_data_quality.json").read_text(encoding="utf-8"))
+check(dq.get("language") == args.lang, "language is in the data-quality report")
+rows = (SFT_DIR / "director_sft.jsonl").read_text(encoding="utf-8")
+check(f"spoken_language: {args.lang}" in rows, "prompts carry the spoken-language line")
+check("language" in first["messages"][0]["content"].lower() and "any language" in first["messages"][0]["content"], "student system prompt explains multi-language input / English output")
+if args.lang == "ar":
+    has_ar = any("\u0600" <= ch <= "\u06ff" for ch in rows)
+    check(has_ar, "Arabic text is present in the final training rows as real characters")
+    check("\\u06" not in rows, "...and NOT as \\uXXXX escapes (neither in the prompt nor in the model's answer)")
+    asst = [_json.loads(l)["messages"][2]["content"] for l in rows.splitlines() if l.strip()]
+    check(all("\\u06" not in a for a in asst) and any("\u0600" <= ch <= "\u06ff" for a in asst for ch in a), "assistant JSON keeps Arabic quotes unescaped")
 
 print("\n=== phase 3: pod C, everything already done ===")
 podC, r = run_pod("podC", -1)

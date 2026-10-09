@@ -23,9 +23,9 @@ from omni_client.prompts import (
 
 
 def _write_jsonl(path: Path, rows: list[dict]):
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for row in rows:
-            f.write(json.dumps(row) + "\n")
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _chat_example(system: str, user: str, assistant_obj: dict) -> dict:
@@ -33,7 +33,7 @@ def _chat_example(system: str, user: str, assistant_obj: dict) -> dict:
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
-            {"role": "assistant", "content": json.dumps(assistant_obj)},
+            {"role": "assistant", "content": json.dumps(assistant_obj, ensure_ascii=False)},
         ]
     }
 
@@ -44,14 +44,14 @@ def run(video_input_dir: Path, video_out_dir: Path):
     if not judge_dir.exists():
         raise FileNotFoundError(f"Stage D output not found: {judge_dir}. Run Stage D first.")
 
-    segment_chunks = {c["chunk_id"]: c for c in json.loads((chunks_dir / "segment_chunks.json").read_text())}
-    style_rollup = json.loads((chunks_dir / "style_rollup.json").read_text())
-    story_input = json.loads((chunks_dir / "story_input.json").read_text())
+    segment_chunks = {c["chunk_id"]: c for c in json.loads((chunks_dir / "segment_chunks.json").read_text(encoding="utf-8"))}
+    style_rollup = json.loads((chunks_dir / "style_rollup.json").read_text(encoding="utf-8"))
+    story_input = json.loads((chunks_dir / "story_input.json").read_text(encoding="utf-8"))
 
-    director_validated = json.loads((judge_dir / "director_validated.json").read_text())
-    footage_validated = json.loads((judge_dir / "footage_validated.json").read_text())
-    style_validated = json.loads((judge_dir / "style_validated.json").read_text())
-    story_validated = json.loads((judge_dir / "story_architect_validated.json").read_text())
+    director_validated = json.loads((judge_dir / "director_validated.json").read_text(encoding="utf-8"))
+    footage_validated = json.loads((judge_dir / "footage_validated.json").read_text(encoding="utf-8"))
+    style_validated = json.loads((judge_dir / "style_validated.json").read_text(encoding="utf-8"))
+    story_validated = json.loads((judge_dir / "story_architect_validated.json").read_text(encoding="utf-8"))
 
     out_dir = video_out_dir / "stage_e_sft"
     out_dir.mkdir(parents=True, exist_ok=True)

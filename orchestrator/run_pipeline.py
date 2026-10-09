@@ -54,7 +54,7 @@ def discover_local_videos(videos_root: Path) -> list[str]:
 
 def _fail_note(state: VideoState, msg: str):
     state.video_dir.mkdir(parents=True, exist_ok=True)
-    with open(state.errors_path, "a") as f:
+    with open(state.errors_path, "a", encoding="utf-8") as f:
         f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
 
 

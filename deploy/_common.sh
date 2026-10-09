@@ -85,7 +85,7 @@ for _d in "$VENV"/lib/python*/site-packages/nvidia/*/lib; do
 done
 # Agent files (P1_A*.jsonl) are ignored: the pipeline reads everything from the video itself.
 export ORION_USE_AGENTS="${ORION_USE_AGENTS:-0}"
-export ORION_WHISPER_MODEL="${ORION_WHISPER_MODEL:-large-v3-turbo}"
+export ORION_WHISPER_MODEL="${ORION_WHISPER_MODEL:-large-v3}"
 
 # Drive settings can be one root (ORION_DRIVE_REMOTE) or three folders by ID (ORION_DRIVE_*_ID).
 drive_configured() { [ -n "${ORION_DRIVE_REMOTE:-}" ] || [ -n "${ORION_DRIVE_INPUT_ID:-}" ]; }

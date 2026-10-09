@@ -21,6 +21,16 @@ EVIDENCE_CAVEAT = (
     "to where to look, not as ground truth."
 )
 
+# The video, its speech and its on-screen text can be in ANY language (a lot of our corpus is
+# Arabic). Source text stays in its original language and is quoted exactly; everything the model
+# WRITES is English, because the footage/music search libraries it feeds are searched in English.
+LANGUAGE_NOTE = (
+    " The transcript and any on-screen text may be in any language (for example Arabic) and are given "
+    "in their original language. Write every JSON string value in English, except text you quote from "
+    "the source, which must stay in its original language, exactly as written. Never translate or "
+    "alter IDs, timestamps or JSON keys."
+)
+
 DIRECTOR_SYSTEM = (
     "You are a documentary editor. Given a video clip, a script/transcript "
     "segment, and the channel's style config, decide the editorial "
@@ -32,7 +42,7 @@ DIRECTOR_SYSTEM = (
     "target duration and type). A separate retrieval step will search the "
     "real libraries from your query later — write the query a search "
     "engine could actually use, not a vague mood word. Cite the chunk_id. "
-    "Respond with valid JSON only." + EVIDENCE_CAVEAT
+    "Respond with valid JSON only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
 )
 
 FOOTAGE_SYSTEM = (
@@ -40,14 +50,14 @@ FOOTAGE_SYSTEM = (
     "and a pool of retrieved candidate assets, confirm which candidates "
     "genuinely match, or reject the pool and specify a better search "
     "query. Only reference candidates actually provided — never invent an "
-    "asset. Respond with valid JSON only." + EVIDENCE_CAVEAT
+    "asset. Respond with valid JSON only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
 )
 
 STYLE_SYSTEM = (
     "You are a channel style analyst. Given sampled frames from a video "
     "plus its pacing, typography, and visual-density evidence, output "
     "that channel's Style Profile config. Respond with valid JSON "
-    "only." + EVIDENCE_CAVEAT
+    "only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
 )
 
 STORY_ARCHITECT_SYSTEM = (
@@ -56,7 +66,7 @@ STORY_ARCHITECT_SYSTEM = (
     "narrative structure: hook, anchor points, escalation, and payoff. "
     "Every claim must cite a real timestamp/segment from the evidence. Do "
     "not invent structure not supported by the transcript. Respond with "
-    "valid JSON only." + EVIDENCE_CAVEAT
+    "valid JSON only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
 )
 
 
@@ -69,6 +79,13 @@ STORY_ARCHITECT_SYSTEM = (
 # would teach the student something false about its own inputs. The user text is
 # identical to what the teacher got; only the system prompt differs.
 # ---------------------------------------------------------------------------
+_STUDENT_LANGUAGE_NOTE = (
+    " The transcript and on-screen text may be in any language (for example Arabic) and are given in "
+    "their original language. Write every JSON string value in English, except text you quote from the "
+    "source, which stays in its original language, exactly as written. Never translate or alter IDs, "
+    "timestamps or JSON keys."
+)
+
 STUDENT_SYSTEM = {
     "director": (
         "You are a documentary editor. Given a script/transcript segment and automatically "
@@ -97,6 +114,11 @@ STUDENT_SYSTEM = {
         "structure not supported by the transcript. Respond with valid JSON only."
     ),
 }
+STUDENT_SYSTEM = {k: v + _STUDENT_LANGUAGE_NOTE for k, v in STUDENT_SYSTEM.items()}
+
+
+def _lang_line(code) -> list[str]:
+    return [f"spoken_language: {code}"] if code else []
 
 
 def build_director_prompt(chunk: dict) -> tuple[str, str]:
@@ -115,6 +137,7 @@ def build_director_prompt(chunk: dict) -> tuple[str, str]:
     lines = [
         f"chunk_id: {chunk['chunk_id']}",
         f"start_sec: {chunk['start_sec']}  end_sec: {chunk['end_sec']}",
+        *_lang_line(chunk.get("language")),
         f"text: \"{chunk['transcript_text']}\"",
     ]
     if ev.get("shots", True):
@@ -128,8 +151,10 @@ def build_director_prompt(chunk: dict) -> tuple[str, str]:
 
 
 def build_footage_prompt(chunk: dict) -> tuple[str, str]:
+    lang = "".join(l + "\n" for l in _lang_line(chunk.get("language")))
     user = (
         f"chunk_id: {chunk['chunk_id']}\n"
+        f"{lang}"
         f"text: \"{chunk['transcript_text']}\"\n"
         f"retrieved_candidates: []  # TODO: wire in Stage 2's retrieval step"
     )
@@ -139,7 +164,8 @@ def build_footage_prompt(chunk: dict) -> tuple[str, str]:
 def build_style_prompt(style_rollup: dict) -> tuple[str, str]:
     dna = style_rollup.get("dna", {})
     ev = style_rollup.get("evidence_available") or {"style_dna": True}
-    lines = [f"VIDEO: {style_rollup.get('video_id')}", f"duration_sec: {style_rollup.get('duration_sec')}"]
+    lines = [f"VIDEO: {style_rollup.get('video_id')}", f"duration_sec: {style_rollup.get('duration_sec')}",
+             *_lang_line(style_rollup.get("language"))]
     if ev.get("style_dna", True):
         for key in ("pacing", "motion", "audio"):
             if dna.get(key):
@@ -158,6 +184,7 @@ def build_story_architect_prompt(story_input: dict) -> tuple[str, str]:
     user = (
         f"VIDEO: {story_input.get('video_id')}\n"
         f"DURATION: {story_input.get('duration_sec')}\n"
+        + "".join(l + "\n" for l in _lang_line(story_input.get("language"))) +
         f"TRANSCRIPT:\n" + "\n".join(lines)
     )
     return STORY_ARCHITECT_SYSTEM, user

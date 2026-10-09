@@ -92,7 +92,7 @@ class LiveProgress:
             "eta_sec_remaining": self._eta_seconds(),
             "updated_at": time.time(),
         }
-        self.status_path.write_text(json.dumps(data, indent=2))
+        self.status_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _render(self):
         if not HAVE_RICH:
@@ -120,7 +120,7 @@ class LiveProgress:
 
     def write_summary_csv(self):
         path = self.run_dir / "_batch_summary.csv"
-        with open(path, "w", newline="") as f:
+        with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["video_id", "status", "total_seconds"])
             for row in self.results:

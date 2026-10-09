@@ -40,7 +40,7 @@ STYLE_REQUIRED_FIELDS = [
 
 def _log_rejection(log_path: Path, stage: str, detail: str):
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "a") as f:
+    with open(log_path, "a", encoding="utf-8") as f:
         f.write(f"[{stage}] {detail}\n")
 
 
@@ -140,8 +140,8 @@ def run(video_input_dir: Path, video_out_dir: Path):
     if not raw_dir.exists():
         raise FileNotFoundError(f"Stage C output not found: {raw_dir}. Run Stage C first.")
 
-    segment_chunks = json.loads((chunks_dir / "segment_chunks.json").read_text())
-    story_input = json.loads((chunks_dir / "story_input.json").read_text())
+    segment_chunks = json.loads((chunks_dir / "segment_chunks.json").read_text(encoding="utf-8"))
+    story_input = json.loads((chunks_dir / "story_input.json").read_text(encoding="utf-8"))
     valid_chunk_ids = {c["chunk_id"] for c in segment_chunks}
     valid_segment_ids = {t["id"] for t in story_input["transcript"]}
     video_id = story_input["video_id"]
@@ -150,23 +150,23 @@ def run(video_input_dir: Path, video_out_dir: Path):
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "rejected_claims.log"
     # Never delete an earlier log: append a run header so every run stays visible.
-    with open(log_path, "a") as _f:
+    with open(log_path, "a", encoding="utf-8") as _f:
         _f.write(f"\n=== Stage D run {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 
-    director_raw = json.loads((raw_dir / "director_raw.json").read_text())
-    footage_raw = json.loads((raw_dir / "footage_raw.json").read_text())
-    style_raw = json.loads((raw_dir / "style_raw.json").read_text())
-    story_raw = json.loads((raw_dir / "story_architect_raw.json").read_text())
+    director_raw = json.loads((raw_dir / "director_raw.json").read_text(encoding="utf-8"))
+    footage_raw = json.loads((raw_dir / "footage_raw.json").read_text(encoding="utf-8"))
+    style_raw = json.loads((raw_dir / "style_raw.json").read_text(encoding="utf-8"))
+    story_raw = json.loads((raw_dir / "story_architect_raw.json").read_text(encoding="utf-8"))
 
     director_validated = _validate_director(director_raw, valid_chunk_ids, log_path)
     footage_validated = _validate_footage(footage_raw, valid_chunk_ids, log_path)
     style_validated = _validate_style(style_raw, video_id, log_path)
     story_validated = _validate_story_architect(story_raw, valid_segment_ids, log_path)
 
-    (out_dir / "director_validated.json").write_text(json.dumps(director_validated, indent=2))
-    (out_dir / "footage_validated.json").write_text(json.dumps(footage_validated, indent=2))
-    (out_dir / "style_validated.json").write_text(json.dumps(style_validated, indent=2) if style_validated else "null")
-    (out_dir / "story_architect_validated.json").write_text(json.dumps(story_validated, indent=2) if story_validated else "null")
+    (out_dir / "director_validated.json").write_text(json.dumps(director_validated, indent=2, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "footage_validated.json").write_text(json.dumps(footage_validated, indent=2, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "style_validated.json").write_text(json.dumps(style_validated, indent=2, ensure_ascii=False) if style_validated else "null", encoding="utf-8")
+    (out_dir / "story_architect_validated.json").write_text(json.dumps(story_validated, indent=2, ensure_ascii=False) if story_validated else "null", encoding="utf-8")
 
     return {
         "director_kept": len(director_validated), "director_total": len(director_raw),

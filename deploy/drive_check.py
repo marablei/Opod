@@ -19,7 +19,7 @@ if not d.ensure_remote_dirs():
 # Write test: proves the token may WRITE to the stages + final-SFT folders before any GPU time is spent.
 import tempfile, shutil, subprocess
 marker = Path(tempfile.mkdtemp()) / "_orion_connected.txt"
-marker.write_text("Orion pod connected. Safe to ignore.\n")
+marker.write_text("Orion pod connected. Safe to ignore.\n", encoding="utf-8")
 for label, root in (("stages", d.stage_root), ("final SFT", d.sft_root)):
     if d.local_backend:
         Path(root).mkdir(parents=True, exist_ok=True); shutil.copy(marker, Path(root) / marker.name); ok = True

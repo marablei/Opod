@@ -29,15 +29,15 @@ class VideoState:
     def _load(path: Path, default: dict) -> dict:
         if path.exists():
             try:
-                return json.loads(path.read_text())
+                return json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 pass
         return dict(default)
 
     def _save(self):
         self.video_dir.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(self._state, indent=2))
-        self.timing_path.write_text(json.dumps(self._timing, indent=2))
+        self.state_path.write_text(json.dumps(self._state, indent=2, ensure_ascii=False), encoding="utf-8")
+        self.timing_path.write_text(json.dumps(self._timing, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def status(self, stage: str) -> str:
         return self._state.get(stage, "pending")
@@ -64,7 +64,7 @@ class VideoState:
         self._state[stage] = "failed"
         self._save()
         self.video_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.errors_path, "a") as f:
+        with open(self.errors_path, "a", encoding="utf-8") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {stage}: {error}\n")
 
     def total_elapsed_sec(self) -> float:
