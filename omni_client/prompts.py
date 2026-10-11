@@ -87,6 +87,8 @@ STORY_SCHEMA = (
     'phrase) and "note" (one sentence). Only use segment ids that appear in the transcript. '
     'A sponsor or advertisement read (the host promoting a product or app, a "link in the description") is NOT a story step: '
     'never use it as the hook, anchor, escalation or payoff, and choose the story beats from the actual argument of the video. '
+    'The acts follow the video timeline, so read the timestamps: act_1_hook and act_1_anchor come from roughly the first quarter of the video, '
+    'act_2_escalation points are spread through the middle, act_3_payoff comes from the last third and act_3_closing from the last quarter. '
     'Do not add other keys.'
 )
 

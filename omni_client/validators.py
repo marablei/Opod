@@ -409,6 +409,10 @@ def validate_story(entry: dict, story_input: dict) -> list[str]:
     ordered = [("act_1_hook", entry["act_1_hook"]), ("act_1_anchor", entry["act_1_anchor"])] + \
               [(f"act_2_escalation[{i}]", x) for i, x in enumerate(esc)] + \
               [("act_3_payoff", entry["act_3_payoff"]), ("act_3_closing", entry["act_3_closing"])]
+    starts = {t["id"]: _num(t.get("start_sec")) for t in story_input.get("transcript", [])}
+    total = _num(story_input.get("duration_sec")) or 0.0
+    # (earliest start allowed, latest start allowed) as a share of the video; only applied to videos of 90 s or more
+    windows = {"act_1_hook": (0.0, 0.35), "act_1_anchor": (0.0, 0.50), "act_3_payoff": (0.45, 1.0), "act_3_closing": (0.70, 1.0)}
     last = -1
     for name, pt in ordered:
         if not isinstance(pt, dict) or set(pt) != {"segment_id", "function", "note"}:
@@ -420,6 +424,10 @@ def validate_story(entry: dict, story_input: dict) -> list[str]:
             if seg < last:
                 p.append(f"{name}: segment {seg} comes before an earlier act point; acts must follow the video order")
             last = max(last, seg)
+            w, st = windows.get(name), starts.get(seg)
+            if w and total >= 90 and st is not None and not (w[0] * total - 1 <= st <= w[1] * total + 1):
+                p.append(f"{name}: segment {seg} starts at {st:.0f}s of a {total:.0f}s video; pick a segment between "
+                         f"{w[0] * total:.0f}s and {w[1] * total:.0f}s for this act point")
         if not _is_str(pt["function"]) or _words(pt["function"]) > 12:
             p.append(f"{name}: function must be a short phrase (max 12 words)")
         if not _is_str(pt["note"]) or len(pt["note"]) > 300:
