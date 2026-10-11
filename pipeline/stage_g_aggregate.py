@@ -6,6 +6,7 @@ needs 4 FINAL files total, each aggregated across all videos).
 Runs once at the end of the batch, not per-video.
 """
 import json
+import os
 from pathlib import Path
 
 SFT_NAMES = ["director_sft.jsonl", "style_sft.jsonl", "footage_sft.jsonl", "story_architect_sft.jsonl"]
@@ -28,6 +29,20 @@ def run(run_dir: Path, video_ids: list[str], out_dir: Path | None = None):
     """Reads <run_dir>/<video>/stage_f_final/*.jsonl; writes the 4 corpus files into out_dir (default run_dir)."""
     out_dir = out_dir or run_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    quarantined = []
+    if os.environ.get("ORION_INCLUDE_QUARANTINED", "0") != "1":
+        for v in video_ids:
+            try:
+                verdict = json.loads((run_dir / v / "_video_verdict.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if verdict.get("state") == "quarantined":
+                quarantined.append({"video": v, "reasons": verdict.get("reasons", [])})
+        if quarantined:
+            skip = {q["video"] for q in quarantined}
+            video_ids = [v for v in video_ids if v not in skip]
+            print(f"[Stage G] QUARANTINED, left out of the final files (kept on disk): {sorted(skip)}")
+    (out_dir / "_quarantined_videos.json").write_text(json.dumps(quarantined, indent=2, ensure_ascii=False), encoding="utf-8")
     for name in SFT_NAMES:
         out_path = out_dir / name
         with open(out_path, "w", encoding="utf-8") as out_f:

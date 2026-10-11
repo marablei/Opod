@@ -66,6 +66,8 @@ FRAME_HEIGHT = int(os.environ.get("ORION_FRAME_HEIGHT", "480"))
 STYLE_STORY_FRAME_COUNT = int(os.environ.get("ORION_STYLE_FRAMES", "12"))
 # An invalid answer (see omni_client/validators.py) is sent back to the model with the reasons, this many extra times.
 VALIDATE_RETRIES = int(os.environ.get("ORION_VALIDATE_RETRIES", "2"))
+# Recovery round (after the judge): every rejected answer gets this many further attempts, with the exact reasons and stricter rules.
+RECOVER_ATTEMPTS = int(os.environ.get("ORION_RECOVER_ATTEMPTS", "2"))
 # Footage calls produce rows that Stage F holds back until the retrieval layer exists (empty candidate pool),
 # so by default they are not made at all: it halves the GPU time per video. Set to 1 once retrieval is wired in.
 FOOTAGE_CALLS = os.environ.get("ORION_FOOTAGE_CALLS", "0") == "1"
@@ -268,16 +270,19 @@ def _feedback(user_prompt: str, problems: list[str]) -> str:
             + "\n- ".join(problems) + "\nAnswer again with ONE corrected JSON object that fixes every point.")
 
 
-def _ask_validated(kind, sys_p, user_p, ctx, *, clip=None, audio=None, frames=None, label=""):
+def _ask_validated(kind, sys_p, user_p, ctx, *, clip=None, audio=None, frames=None, label="",
+                   initial_problems=None, hint="", retries=None):
     """Call the model; check the answer with omni_client/validators.py; if it is invalid, ask again with the
-    reasons (VALIDATE_RETRIES times). Returns (answer, problems_left). In fake mode there is no check."""
-    problems: list[str] = []
+    reasons (VALIDATE_RETRIES times). Returns (answer, problems_left). In fake mode there is no check.
+    Recovery rounds pass the earlier failure reasons (initial_problems) and stricter extra rules (hint)."""
+    problems: list[str] = list(initial_problems or [])
+    extra = f"\n\nExtra rules for this answer:\n{hint}" if hint else ""
     result = None
     attempts = 0
-    for attempt in range(1, VALIDATE_RETRIES + 2):
+    for attempt in range(1, (VALIDATE_RETRIES if retries is None else retries) + 2):
         attempts = attempt
         t0 = time.time()
-        raw = _call_model(sys_p, _feedback(user_p, problems) if problems else user_p,
+        raw = _call_model(sys_p, _feedback(user_p + extra, problems) if problems else user_p + extra,
                           video_clip_path=clip, audio_path=audio, frame_paths=frames)
         if MODE == "fake":
             return raw, []
@@ -454,3 +459,66 @@ def run(video_input_dir: Path, video_out_dir: Path):
         "retried": prog.d["retried"],
         "gave_up": prog.d["gave_up"],
     }
+
+
+def recover(video_input_dir: Path, video_out_dir: Path, director_failures: dict, other_failures: dict, max_calls: int) -> dict:
+    """Recovery round. director_failures = {chunk_id: [reasons]}; other_failures = {"style"|"story": [reasons]}.
+    Re-asks only those answers (clip/audio/frames re-extracted), replaces the raw answer ONLY when the new one passes
+    the checks, and returns a provenance record. Never touches answers that already passed."""
+    if MODE != "live":
+        return {"skipped": "not a live run", "changed": False}
+    out_dir = video_out_dir / "stage_c_omni"
+    chunks = {c["chunk_id"]: c for c in json.loads((video_out_dir / "stage_b_chunks" / "segment_chunks.json").read_text(encoding="utf-8"))}
+    style_rollup = json.loads((video_out_dir / "stage_b_chunks" / "style_rollup.json").read_text(encoding="utf-8"))
+    story_input = json.loads((video_out_dir / "stage_b_chunks" / "story_input.json").read_text(encoding="utf-8"))
+    source_video = find_source_video(video_input_dir)
+    clips_dir, frames_dir = out_dir / "_clips", out_dir / "_frames"
+    record = {"director": {}, "single": {}, "calls": 0, "changed": False, "max_calls": max_calls}
+
+    director_raw = json.loads((out_dir / "director_raw.json").read_text(encoding="utf-8"))
+    for cid, probs in director_failures.items():
+        chunk = chunks.get(cid)
+        if chunk is None:
+            continue
+        if record["calls"] >= max_calls:
+            record["director"][cid] = {"before": probs, "outcome": "not attempted: call budget used up"}
+            continue
+        clip = clips_dir / f"{cid}.mp4"; wav = clips_dir / f"{cid}.wav"
+        extract_clip(source_video, chunk["start_sec"], chunk["end_sec"], clip)
+        audio = wav if extract_audio(source_video, chunk["start_sec"], chunk["end_sec"], wav) else None
+        sys_p, user_p = build_director_prompt(chunk)
+        result, left = _ask_validated("director", sys_p, user_p, chunk, clip=clip, audio=audio, label=f"recover director {cid}",
+                                      initial_problems=probs, hint=validators.escalation_hints(probs), retries=RECOVER_ATTEMPTS - 1)
+        record["calls"] += result.get("_attempts", 1)
+        ok = not left
+        record["director"][cid] = {"before": probs, "attempts": result.get("_attempts", 1),
+                                   "outcome": "recovered" if ok else "still failing", "after": left}
+        if ok:
+            result["chunk_id"] = cid
+            director_raw = [result if e.get("chunk_id") == cid else e for e in director_raw]
+            record["changed"] = True
+    (out_dir / "director_raw.json").write_text(json.dumps(director_raw, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    frames: list[Path] = []
+    for kind, builder, ctx_obj, fname in (("style", build_style_prompt, style_rollup, "style_raw.json"),
+                                          ("story", build_story_architect_prompt, story_input, "story_architect_raw.json")):
+        probs = other_failures.get(kind)
+        if not probs:
+            continue
+        if record["calls"] >= max_calls:
+            record["single"][kind] = {"before": probs, "outcome": "not attempted: call budget used up"}
+            continue
+        if not frames:
+            frames.extend(sample_frames(source_video, STYLE_STORY_FRAME_COUNT, frames_dir, story_input.get("duration_sec") or 0))
+        sys_p, user_p = builder(ctx_obj)
+        result, left = _ask_validated(kind, sys_p, user_p, ctx_obj, frames=frames or None, label=f"recover {kind}",
+                                      initial_problems=probs, hint=validators.escalation_hints(probs), retries=RECOVER_ATTEMPTS - 1)
+        record["calls"] += result.get("_attempts", 1)
+        ok = not left
+        record["single"][kind] = {"before": probs, "attempts": result.get("_attempts", 1),
+                                  "outcome": "recovered" if ok else "still failing", "after": left}
+        if ok:
+            result["video_id"] = ctx_obj["video_id"]
+            (out_dir / fname).write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+            record["changed"] = True
+    return record

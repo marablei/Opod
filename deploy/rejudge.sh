@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Re-run ONLY the judge / rows / QA stages (D-F) for every video made by the new pipeline. No model calls: takes seconds, costs nothing.
+# Re-run ONLY the judge / rows / QA stages (D-F) for every video made by the new pipeline. Normally no model calls and seconds long.
+# EXCEPTION: if the judge still rejects something and that video has not had its recovery round yet, those rejected answers
+# (a handful) are asked again once with stricter rules (the model server must be up; costs a few cents). Then the budget verdict is written.
 # Use it after a validator fix (e.g. the beat-overlap repair) to rescue answers the old rules had dropped. Old V1 output is left alone.
 #   bash /workspace/Opod/deploy/rejudge.sh
 set -Eeuo pipefail

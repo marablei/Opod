@@ -155,6 +155,12 @@ function videoCard(v){
   if (m.length) card.append(h("div",{class:"meta"}, m.map(x=>h("span",null,x))));
   if (Object.keys(v.treatments||{}).length) card.append(h("div",{class:"meta"}, "treatments: "+Object.entries(v.treatments).map(([k,c])=>k+" "+c).join(", ")));
   (v.warnings||[]).forEach(w=>card.append(h("div",{class:"warn"},"⚠ "+w)));
+  if (v.verdict) { const vd = v.verdict, st = vd.state||"?";
+    card.append(h("div",{class:(st==="approved"?"meta":(st==="flagged"?"warn":"err"))},
+      "Verdict: "+st.toUpperCase()+" - "+vd.rejected+" of "+vd.total_chunks+" chunks rejected ("+vd.rejected_pct+"%)"
+      +(vd.recovery?(", recovery retried "+vd.recovery.attempted+", fixed "+vd.recovery.recovered):"")
+      +((vd.reasons||[]).length?(" | "+vd.reasons.join("; ")):"")
+      +(st==="quarantined"?" | LEFT OUT of the training files (kept on disk)":""))); }
   const rp = v.repairs||{}; if (rp.director_chunks) {
     const fixed = rp.repaired||0, pct = Math.round(100*fixed/rp.director_chunks);
     card.append(h("div",{class:(pct>30?"warn":"meta")}, "Director answers: "+(rp.raw||0)+" used exactly as the model wrote them, "+fixed+" repaired by code ("+pct+"%), "+(rp.rejected||0)+" rejected"+(fixed?"  ["+Object.entries(rp.repair_types||{}).map(([k,c])=>k+" "+c).join(", ")+"]":"")+(pct>30?"  - TOO MANY REPAIRS: check the model/prompt before trusting this video":"")));

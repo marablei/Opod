@@ -270,6 +270,29 @@ def describe_repairs(raw: dict, final: dict) -> list[str]:
     return out
 
 
+def escalation_hints(problems) -> str:
+    """Stricter extra rules for a recovery attempt, chosen by code from the exact failure reasons (no model involved)."""
+    t = " ".join(str(x) for x in (problems or [])).lower()
+    h = []
+    if "quotes words" in t or "neither in this chunk" in t or "nobody says" in t:
+        h.append("Do not use quotation marks anywhere in your answer; paraphrase instead of quoting.")
+    if "at most 8" in t or "visual_beats has" in t:
+        h.append("Use at most 5 visual_beats: merge neighbouring shots of the same kind.")
+    if "in order and not overlap" in t:
+        h.append("List visual_beats strictly in time order; each beat must start at or after the end of the previous beat; no overlapping times.")
+    if "times must satisfy" in t:
+        h.append("Every beat time is in seconds from the START OF THIS CHUNK and must lie between 0 and the chunk length.")
+    if "too generic" in t:
+        h.append('For audio_need.query name a concrete mood, an instrument and a tempo you actually hear, for example "tense low strings, slow pulse".')
+    if "treatment" in t:
+        h.append("Set treatment to 'mixed' unless one visual kind clearly dominates the beats.")
+    if "footage_need.query" in t:
+        h.append("footage_need.query must name the main non-host visual as a short search phrase, never 'none'.")
+    if "act point" in t:
+        h.append('Choose act_3_payoff and act_3_closing from segments late in the video, using the "% into the video" markers on each line.')
+    return "\n".join(f"- {x}" for x in h)
+
+
 def _repair_overlaps(beats, dur: float, min_len: float = 0.4):
     """A cutaway shown OVER the host (host 0-14.6, chart 2.8-6.8) is a normal editing pattern, not a mistake. Rebuild it as
     ordered, non-overlapping beats: later/shorter beats are painted over earlier/longer ones, leftovers of the host become

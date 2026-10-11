@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator.state import VideoState, STAGES
 from orchestrator.progress import LiveProgress
-from orchestrator import drive_sync, preflight, events
+from orchestrator import drive_sync, preflight, events, recovery
 from pipeline import (
     stage_a_unified_dna, stage_b_chunking, stage_d_judge,
     stage_e_dataset_extractor, stage_f_sft_qa, stage_g_aggregate,
@@ -56,6 +56,29 @@ def _fail_note(state: VideoState, msg: str):
     state.video_dir.mkdir(parents=True, exist_ok=True)
     with open(state.errors_path, "a", encoding="utf-8") as f:
         f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+
+
+def _recover_and_decide(video_name: str, local_in: Path, video_out_dir: Path):
+    """After the judge: any rejected answer (even 1%) is asked again once with stricter rules; the judge then re-runs;
+    finally the failure budget decides approved / flagged / quarantined. Must never fail the video itself."""
+    try:
+        info = recovery.recover_failures(local_in, video_out_dir)
+        if info.get("changed"):
+            events.emit("recovery_done", director=len(info.get("director", {})), single=list(info.get("single", {})),
+                        extra_calls=info.get("calls", 0))
+            STAGE_FUNCS["stage_d"](video_input_dir=local_in, video_out_dir=video_out_dir)   # re-judge the updated answers
+        verdict = recovery.write_verdict(video_out_dir, info if "skipped" not in info else None)
+        events.emit("video_verdict", state=verdict["state"], rejected=verdict["rejected"], total=verdict["total_chunks"],
+                    reasons=verdict["reasons"])
+        print(f"[orion] {video_name}: {verdict['state'].upper()} - {verdict['rejected']} of {verdict['total_chunks']} chunks rejected"
+              + (f" ({'; '.join(verdict['reasons'])})" if verdict["reasons"] else ""))
+    except Exception as e:                                  # noqa: BLE001 - recovery is best-effort, the judge result stands
+        _fail_note(VideoState(video_out_dir), f"recovery/verdict step failed: {e}")
+        events.emit("recovery_failed", error=str(e)[:400])
+        try:
+            recovery.write_verdict(video_out_dir)
+        except Exception:                                   # noqa: BLE001
+            pass
 
 
 def process_video(video_name: str, input_root: Path, run_dir: Path, progress: LiveProgress,
@@ -110,6 +133,8 @@ def process_video(video_name: str, input_root: Path, run_dir: Path, progress: Li
             state.mark_done(stage, elapsed)
             events.emit("stage_done", stage=stage, sec=round(elapsed, 1))
             progress.record_stage_time(stage, elapsed)
+            if stage == "stage_d":
+                _recover_and_decide(video_name, local_in, video_out_dir)
             if stage == "stage_a":
                 report = preflight.quality_report(video_out_dir)
                 for w in report["warnings"]:

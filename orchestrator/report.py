@@ -42,6 +42,9 @@ def _flags(v: dict) -> list[str]:
     dq = v["distinct_footage_queries"]
     if dq and dq[1] >= 4 and dq[0] / dq[1] < 0.6:
         f.append(f"Director: only {dq[0]} distinct footage queries in {dq[1]} - answers repeat")
+    vd = v.get("verdict")
+    if vd and vd.get("state") != "approved":
+        f.append(f"VERDICT {vd['state'].upper()}: {'; '.join(vd.get('reasons', []))}")
     rp = v.get("repairs") or {}
     if rp.get("director_chunks") and rp.get("repaired", 0) / rp["director_chunks"] > 0.30:
         f.append(f"Director: {rp['repaired']} of {rp['director_chunks']} chunks needed code repairs ({rp.get('repair_types')}); too many to trust without a spot-check")
