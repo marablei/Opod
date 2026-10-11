@@ -39,7 +39,7 @@ def _strip_meta(entry):
     return {k: v for k, v in entry.items() if k not in ("_problems", "_attempts")} if isinstance(entry, dict) else entry
 
 
-def _validate_director(entries: list[dict], chunks_by_id: dict, log_path: Path) -> list[dict]:
+def _validate_director(entries: list[dict], chunks_by_id: dict, log_path: Path, ledger: list | None = None) -> list[dict]:
     """Same checks Stage C ran (omni_client/validators.py), repeated here so nothing invalid can pass
     even if it came from an old cache or another pod."""
     validated = []
@@ -48,7 +48,8 @@ def _validate_director(entries: list[dict], chunks_by_id: dict, log_path: Path) 
         if chunk is None:
             _log_rejection(log_path, "director", f"chunk_id '{entry.get('chunk_id')}' not found in this video's chunks — rejected")
             continue
-        entry = validators.normalize_director(_strip_meta(entry), chunk)
+        raw_entry = _strip_meta(entry)
+        entry = validators.normalize_director(raw_entry, chunk)
         problems = validators.validate_director(entry, chunk)
         if problems:
             fixed = validators.salvage_audio(entry, problems)
@@ -57,8 +58,13 @@ def _validate_director(entries: list[dict], chunks_by_id: dict, log_path: Path) 
                 _log_rejection(log_path, "director", f"{chunk['chunk_id']} kept: audio query stayed generic after re-asks; stored as 'music bed present; character not specified'")
         if problems:
             _log_rejection(log_path, "director", f"{chunk['chunk_id']} rejected: " + " | ".join(problems))
+            if ledger is not None:
+                ledger.append({"chunk_id": chunk["chunk_id"], "status": "rejected", "repairs": []})
             continue
         validated.append(entry)
+        if ledger is not None:
+            rep = validators.describe_repairs(raw_entry, entry)
+            ledger.append({"chunk_id": chunk["chunk_id"], "status": "repaired" if rep else "raw", "repairs": rep})
     return validated
 
 
@@ -126,7 +132,16 @@ def run(video_input_dir: Path, video_out_dir: Path):
     style_raw = json.loads((raw_dir / "style_raw.json").read_text(encoding="utf-8"))
     story_raw = json.loads((raw_dir / "story_architect_raw.json").read_text(encoding="utf-8"))
 
-    director_validated = _validate_director(director_raw, chunks_by_id, log_path)
+    ledger: list = []
+    director_validated = _validate_director(director_raw, chunks_by_id, log_path, ledger)
+    by_status = {k: sum(1 for x in ledger if x["status"] == k) for k in ("raw", "repaired", "rejected")}
+    by_type: dict = {}
+    for x in ledger:
+        for r in x["repairs"]:
+            k = r.split(":")[0]; by_type[k] = by_type.get(k, 0) + 1
+    (out_dir / "repairs_report.json").write_text(json.dumps(
+        {"director_chunks": len(ledger), **by_status, "repair_types": by_type, "chunks": [x for x in ledger if x["status"] != "raw"]},
+        indent=2, ensure_ascii=False), encoding="utf-8")
     footage_validated = _validate_footage(footage_raw, chunks_by_id, log_path)
     style_validated = _validate_style(style_raw, video_id, style_rollup, log_path)
     story_validated = _validate_story_architect(story_raw, story_input, log_path)

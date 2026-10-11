@@ -241,6 +241,33 @@ def _cap_beats(beats, max_beats: int):
     return out
 
 
+def describe_repairs(raw: dict, final: dict) -> list[str]:
+    """What code changed between the model's raw Director answer and what is stored. Pure comparison, no model.
+    Durations are always recomputed by code, so they are not counted as repairs."""
+    out = []
+    rb, fb = raw.get("visual_beats"), final.get("visual_beats")
+    if isinstance(rb, list) and isinstance(fb, list):
+        if len(rb) != len(fb):
+            out.append(f"beats_changed:{len(rb)}->{len(fb)}")
+        else:
+            for a, b in zip(rb, fb):
+                try:
+                    if a.get("kind") != b.get("kind") or abs(float(a["start_sec"]) - float(b["start_sec"])) > 0.15 \
+                            or abs(float(a["end_sec"]) - float(b["end_sec"])) > 0.15:
+                        out.append("beats_adjusted"); break
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    out.append("beats_adjusted"); break
+    if raw.get("treatment") != final.get("treatment"):
+        out.append(f"treatment_rederived:{raw.get('treatment')}->{final.get('treatment')}")
+    rq, fq = (raw.get("footage_need") or {}).get("query"), (final.get("footage_need") or {}).get("query")
+    if isinstance(rq, str) and rq.strip() != fq:
+        out.append("footage_query_derived_from_beats" if rq.strip().lower() == "none" else "footage_query_set_none")
+    ra, fa = (raw.get("audio_need") or {}).get("query"), (final.get("audio_need") or {}).get("query")
+    if ra != fa:
+        out.append("audio_neutral_label")
+    return out
+
+
 def _repair_overlaps(beats, dur: float, min_len: float = 0.4):
     """A cutaway shown OVER the host (host 0-14.6, chart 2.8-6.8) is a normal editing pattern, not a mistake. Rebuild it as
     ordered, non-overlapping beats: later/shorter beats are painted over earlier/longer ones, leftovers of the host become

@@ -144,6 +144,7 @@ def video_summary(vdir: Path) -> dict:
         "qa": (qa or {}).get("shards"),
         "rejected": rej_counts,
         "kept_with_fallback": kept_counts,
+        "repairs": {k: v for k, v in (_json(vdir / "stage_d_judge" / "repairs_report.json", {}) or {}).items() if k != "chunks"},
         "rejected_lines": rej[-6:],
         "treatments": treat,
         "beats_per_chunk": round(beats_total / len(director), 1) if director else None,
