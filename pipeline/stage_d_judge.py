@@ -105,6 +105,9 @@ def _validate_story_architect(story: dict, valid_segment_ids: set, log_path: Pat
     all_points.extend(story.get("act_2_escalation", []))
 
     if not all_points:
+        _log_rejection(log_path, "story_architect",
+                       f"no recognizable act keys (act_1_hook, act_1_anchor, act_2_escalation, act_3_payoff, "
+                       f"act_3_closing) in the answer; keys seen: {sorted(story.keys())} — rejected")
         return None
 
     normalized = []

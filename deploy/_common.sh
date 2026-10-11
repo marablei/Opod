@@ -66,7 +66,7 @@ case "$MODEL_PROFILE" in
     # 0.90 (not 0.95/0.97) on purpose: leaves ~4-5 GB of the 48 GB free for Whisper, which
     # runs on the same GPU to transcribe each video. If the model OOMs at load, lower the
     # clip size (ORION_CLIP_HEIGHT) rather than raising this.
-    PROFILE_FLAGS="--max-model-len 32768 --gpu-memory-utilization 0.90 --max-num-seqs 1"
+    PROFILE_FLAGS="--max-model-len 32768 --gpu-memory-utilization 0.80 --max-num-seqs 1"
     ;;
   bf16)
     MODEL_ID="${MODEL_ID:-Qwen/Qwen3-Omni-30B-A3B-Instruct}"

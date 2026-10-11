@@ -31,6 +31,7 @@ sends exactly this payload to the live server with a synthetic clip — run it
 (setup_runpod.sh does) BEFORE launching a real batch.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -176,6 +177,12 @@ def _fake_response(system_prompt: str, user_content: str) -> dict:
             "act_3_closing": {"segment_id": "FAKE", "function": "FAKE_placeholder", "note": "FAKE"},
         }
     raise ValueError("Unrecognized prompt type for fake mode")
+
+
+def _ph(system_prompt: str, user_prompt: str) -> str:
+    """Short fingerprint of the exact prompt. Part of every cache key, so changing a prompt can never
+    silently reuse answers that were written for the old one."""
+    return hashlib.sha1((system_prompt + "\x00" + user_prompt).encode("utf-8")).hexdigest()[:8]
 
 
 def _parse_json_loose(text: str) -> dict:
@@ -324,13 +331,13 @@ def run(video_input_dir: Path, video_out_dir: Path):
             ("footage", build_footage_prompt, footage_results),
         ):
             # key includes the chunk's time range: if chunking ever changes, stale answers are NOT reused
-            key = f"{label}__{cid}__{int(chunk['start_sec'] * 1000)}_{int(chunk['end_sec'] * 1000)}"
+            sys_p, user_p = builder(chunk)
+            key = f"{label}__{cid}__{int(chunk['start_sec'] * 1000)}_{int(chunk['end_sec'] * 1000)}__{_ph(sys_p, user_p)}"
             result = cache.get(key)
             if result is not None:
                 cache_hits += 1
             else:
                 clip, audio = get_media() if live else (None, None)
-                sys_p, user_p = builder(chunk)
                 result = _call_model(sys_p, user_p, video_clip_path=clip, audio_path=audio)
                 result["chunk_id"] = cid
                 cache.put(key, result)
@@ -344,21 +351,23 @@ def run(video_input_dir: Path, video_out_dir: Path):
             frames.extend(sample_frames(source_video, STYLE_STORY_FRAME_COUNT, frames_dir, duration_sec))
         return frames
 
-    style_result = cache.get("style")
+    sys_p, user_p = build_style_prompt(style_rollup)
+    style_key = f"style__{_ph(sys_p, user_p)}"
+    style_result = cache.get(style_key)
     if style_result is None:
-        sys_p, user_p = build_style_prompt(style_rollup)
         style_result = _call_model(sys_p, user_p, frame_paths=get_frames() or None)
         style_result["video_id"] = style_rollup["video_id"]
-        cache.put("style", style_result)
+        cache.put(style_key, style_result)
     else:
         cache_hits += 1
 
-    story_result = cache.get("story")
+    sys_p, user_p = build_story_architect_prompt(story_input)
+    story_key = f"story__{_ph(sys_p, user_p)}"
+    story_result = cache.get(story_key)
     if story_result is None:
-        sys_p, user_p = build_story_architect_prompt(story_input)
         story_result = _call_model(sys_p, user_p, frame_paths=get_frames() or None)
         story_result["video_id"] = story_input["video_id"]
-        cache.put("story", story_result)
+        cache.put(story_key, story_result)
     else:
         cache_hits += 1
 

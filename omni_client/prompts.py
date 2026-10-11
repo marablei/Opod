@@ -31,6 +31,43 @@ LANGUAGE_NOTE = (
     "alter IDs, timestamps or JSON keys."
 )
 
+# ---------------------------------------------------------------------------
+# OUTPUT SCHEMAS. A model told only "output JSON" invents its own keys (first real run: the Style
+# answer was 30 made-up "channel_video_*" fields and the Story answer used a different layout, so the
+# judge rejected both). The exact keys are stated in the prompt, for the teacher AND for the student
+# (the student must learn the same format).
+# ---------------------------------------------------------------------------
+DIRECTOR_SCHEMA = (
+    ' Output ONE JSON object with exactly these keys: "chunk_id" (copy it from the input), '
+    '"editorial_function" (a short phrase: what this segment does in the story), '
+    '"treatment" (a short snake_case label such as talking_head, direct_broll, graphic_overlay, screen_recording), '
+    '"footage_need" = {"query": a visual-search phrase of at most 12 words naming the main thing to show, '
+    '"duration_sec": number}, '
+    '"audio_need" = {"query": a music/sfx search phrase of at most 12 words, or "none", "duration_sec": number, '
+    '"type": "music" or "sfx" or "none"}, '
+    '"reasoning" (one or two sentences saying what in the text or evidence supports this). '
+    'Queries are short search phrases, not descriptions of the whole clip, and contain no timestamps. '
+    'Do not add other keys.'
+)
+FOOTAGE_SCHEMA = (
+    ' Output ONE JSON object with exactly these keys: "chunk_id", "decision" ("confirm" or "reject"), '
+    '"confirmed_asset_ids" (list; only ids that appear in retrieved_candidates), "rejected_asset_ids" (list), '
+    '"better_query" (a search phrase of at most 12 words; only when decision is "reject", otherwise ""), '
+    '"reasoning" (one or two sentences). Do not add other keys.'
+)
+STYLE_SCHEMA = (
+    ' Output ONE JSON object with exactly these six keys and no others: "pacing_target", "typography_system", '
+    '"color_lut", "graphic_density", "sound_design_intensity", "map_motion_frequency". Each value is a short '
+    'English phrase (at most 12 words) describing that aspect of the channel style, based on the frames and '
+    'evidence. Do NOT report technical facts such as codec, resolution, bitrate, duration or file name.'
+)
+STORY_SCHEMA = (
+    ' Output ONE JSON object with exactly these keys: "act_1_hook", "act_1_anchor", "act_3_payoff", '
+    '"act_3_closing" (each an object) and "act_2_escalation" (a list of 1 to 4 such objects). Every object has '
+    '"segment_id" (written exactly like the ids in the transcript, for example "seg_12"), "function" (a short '
+    'phrase) and "note" (one sentence). Only use segment ids that appear in the transcript. Do not add other keys.'
+)
+
 DIRECTOR_SYSTEM = (
     "You are a documentary editor. Given a video clip, a script/transcript "
     "segment, and the channel's style config, decide the editorial "
@@ -42,7 +79,7 @@ DIRECTOR_SYSTEM = (
     "target duration and type). A separate retrieval step will search the "
     "real libraries from your query later — write the query a search "
     "engine could actually use, not a vague mood word. Cite the chunk_id. "
-    "Respond with valid JSON only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
+    "Respond with valid JSON only." + LANGUAGE_NOTE + DIRECTOR_SCHEMA + EVIDENCE_CAVEAT
 )
 
 FOOTAGE_SYSTEM = (
@@ -50,14 +87,14 @@ FOOTAGE_SYSTEM = (
     "and a pool of retrieved candidate assets, confirm which candidates "
     "genuinely match, or reject the pool and specify a better search "
     "query. Only reference candidates actually provided — never invent an "
-    "asset. Respond with valid JSON only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
+    "asset. Respond with valid JSON only." + LANGUAGE_NOTE + FOOTAGE_SCHEMA + EVIDENCE_CAVEAT
 )
 
 STYLE_SYSTEM = (
     "You are a channel style analyst. Given sampled frames from a video "
     "plus its pacing, typography, and visual-density evidence, output "
     "that channel's Style Profile config. Respond with valid JSON "
-    "only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
+    "only." + LANGUAGE_NOTE + STYLE_SCHEMA + EVIDENCE_CAVEAT
 )
 
 STORY_ARCHITECT_SYSTEM = (
@@ -66,7 +103,7 @@ STORY_ARCHITECT_SYSTEM = (
     "narrative structure: hook, anchor points, escalation, and payoff. "
     "Every claim must cite a real timestamp/segment from the evidence. Do "
     "not invent structure not supported by the transcript. Respond with "
-    "valid JSON only." + LANGUAGE_NOTE + EVIDENCE_CAVEAT
+    "valid JSON only." + LANGUAGE_NOTE + STORY_SCHEMA + EVIDENCE_CAVEAT
 )
 
 
@@ -114,7 +151,8 @@ STUDENT_SYSTEM = {
         "structure not supported by the transcript. Respond with valid JSON only."
     ),
 }
-STUDENT_SYSTEM = {k: v + _STUDENT_LANGUAGE_NOTE for k, v in STUDENT_SYSTEM.items()}
+_STUDENT_SCHEMA = {"director": DIRECTOR_SCHEMA, "footage": FOOTAGE_SCHEMA, "style": STYLE_SCHEMA, "story_architect": STORY_SCHEMA}
+STUDENT_SYSTEM = {k: v + _STUDENT_LANGUAGE_NOTE + _STUDENT_SCHEMA[k] for k, v in STUDENT_SYSTEM.items()}
 
 
 def _lang_line(code) -> list[str]:

@@ -11,8 +11,11 @@ class WhisperModel:
 
     def transcribe(self, path, **kw):
         assert kw.get("word_timestamps") and kw.get("vad_filter"), "pipeline must ask for words + VAD"
-        dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
-                                    "default=nw=1:nk=1", path], capture_output=True, text=True).stdout)
+        if hasattr(path, "size"):  # decoded 16 kHz audio array (what the real pipeline now passes)
+            dur = path.size / 16000.0
+        else:
+            dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
+                                        "default=nw=1:nk=1", path], capture_output=True, text=True).stdout)
         # Pretend to detect Arabic when STUB_LANG=ar (or when the caller forces language="ar").
         lang = kw.get("language") or os.environ.get("STUB_LANG", "en")
         segs, t, i = [], 0.0, 0

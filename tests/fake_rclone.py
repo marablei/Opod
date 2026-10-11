@@ -11,7 +11,7 @@ ROOT = Path(os.environ["FAKE_RCLONE_ROOT"])
 EXC = {"_clips", "_frames", "_audio"}
 a = sys.argv[1:]
 cmd, rest = a[0], a[1:]
-VAL = {"--transfers", "--checkers", "--stats", "--exclude", "--max-depth", "--retries"}
+VAL = {"--transfers", "--checkers", "--stats", "--exclude", "--include", "--files-from-raw", "--max-depth", "--retries"}
 pos, flags, i = [], {}, 0
 while i < len(rest):
     t = rest[i]
@@ -53,7 +53,14 @@ elif cmd == "lsf":
         print(x.name + ("/" if x.is_dir() else ""))
 elif cmd == "copy":
     src, dst = real(pos[0]), real(pos[1])
-    assert "**/_clips/**" in flags.get("--exclude", []), "filters missing"
+    inc = flags.get("--include", [])
+    if "--files-from-raw" in flags:
+        raw = [l.rstrip("\n") for l in open(flags["--files-from-raw"][0], encoding="utf-8")]
+        inc = ["/" + l for l in raw]  # exact names (spaces kept)
+    assert inc or "**/_clips/**" in flags.get("--exclude", []), "filters missing"
+    import fnmatch
+    def _ok(name):  # rclone --include "/exact name": glob specials arrive backslash-escaped
+        return (not inc) or any(name == re.sub(r"\\(.)", r"\1", i.lstrip("/")) for i in inc)
     depth1 = "--max-depth" in flags
     if not src.exists():
         sys.exit(3)
@@ -65,6 +72,7 @@ elif cmd == "copy":
                 if x.name in EXC or depth1: continue
                 walk(x, d / x.name, level + 1)
             else:
+                if not _ok(x.name): continue
                 t = d / x.name
                 if t.exists() and t.stat().st_size == x.stat().st_size and int(t.stat().st_mtime) == int(x.stat().st_mtime): continue
                 if "--update" in flags and t.exists() and t.stat().st_mtime > x.stat().st_mtime: continue

@@ -70,5 +70,11 @@ class VideoState:
     def total_elapsed_sec(self) -> float:
         return sum(v for k, v in self._timing.items() if k.endswith("_sec"))
 
+    def reset_from(self, stage: str):
+        """Mark `stage` and every later stage pending again (used by --redo-from)."""
+        for s in STAGES[STAGES.index(stage):]:
+            self._state[s] = "pending"
+        self._save()
+
     def is_fully_done(self) -> bool:
         return all(self.is_done(s) for s in STAGES)

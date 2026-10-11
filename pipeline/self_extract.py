@@ -120,6 +120,22 @@ def pick_language(video_input_dir: Path) -> tuple[str | None, str]:
     return None, "auto-detect"
 
 
+def _decode_audio_ffmpeg(video: Path):
+    """16 kHz mono float32 via ffmpeg. Avoids faster-whisper's PyAV decoder, whose version must
+    match exactly (a mismatch raised "open() got an unexpected keyword argument 'metadata_errors'").
+    Returns a numpy array, or None if numpy/ffmpeg can't do it (caller then passes the file path)."""
+    try:
+        import numpy as np
+        r = subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(video), "-vn", "-ac", "1",
+             "-ar", "16000", "-f", "f32le", "-"], capture_output=True, check=True)
+        arr = np.frombuffer(r.stdout, dtype=np.float32)
+        return arr if arr.size else None
+    except Exception as e:
+        print(f"[self_extract] ffmpeg audio decode failed ({type(e).__name__}); falling back to file path")
+        return None
+
+
 def transcribe(video: Path, language: str | None = None) -> tuple[list[dict], dict]:
     """Returns (segments, language_info).
     segments: [{id, start_sec, end_sec, text, words:[{word,start_sec,end_sec}]}] in the ORIGINAL spoken language.
@@ -135,6 +151,8 @@ def transcribe(video: Path, language: str | None = None) -> tuple[list[dict], di
             "or set ORION_TRANSCRIBE=none to skip speech-to-text.") from e
 
     model = _load_whisper(WhisperModel)
+    audio = _decode_audio_ffmpeg(video)
+    source = audio if audio is not None else str(video)
     kwargs = dict(
         word_timestamps=True, vad_filter=True, beam_size=5,
         condition_on_previous_text=False,  # long-form: avoids repetition loops / early stop
@@ -146,11 +164,11 @@ def transcribe(video: Path, language: str | None = None) -> tuple[list[dict], di
     if MULTILINGUAL:
         kwargs["multilingual"] = True
     try:
-        segments, info = model.transcribe(str(video), **kwargs)
+        segments, info = model.transcribe(source, **kwargs)
     except TypeError:  # older faster-whisper without those options
         for k in ("language_detection_segments", "language_detection_threshold", "multilingual"):
             kwargs.pop(k, None)
-        segments, info = model.transcribe(str(video), **kwargs)
+        segments, info = model.transcribe(source, **kwargs)
     out = []
     for i, seg in enumerate(segments, start=1):
         text = (seg.text or "").strip()

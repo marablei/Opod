@@ -28,6 +28,11 @@ else
   "$PY" "$REPO_DIR/deploy/drive_check.py" || die "Drive check failed — fix before spending GPU time."
 fi
 
+# Never run two pipelines at once: they write the same clip/state files and corrupt each other.
+if pgrep -f "orchestrator/run_pipeline.py" >/dev/null 2>&1; then
+  die "A pipeline is already running (pgrep shows it). Wait for it, or stop it first: kill \$(cat $WORKSPACE/orion_run.pid)"
+fi
+
 CMD=("$PY" "$REPO_DIR/orchestrator/run_pipeline.py" --input "$INPUT_DIR" --out "$OUTPUT_DIR" "$@")
 if [ "$FG" = 1 ]; then
   "${CMD[@]}"

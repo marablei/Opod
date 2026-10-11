@@ -34,7 +34,12 @@ fi
 mkdir -p "$HF_HOME" "$INPUT_DIR" "$OUTPUT_DIR"
 FREE_GB="$(df -BG --output=avail "$WORKSPACE" | tail -1 | tr -dc '0-9')"
 log "free disk on $WORKSPACE: ${FREE_GB} GB (need >= ${MIN_DISK_GB})"
-[ "$FREE_GB" -ge "$MIN_DISK_GB" ] || die "Not enough disk. Give the pod a bigger volume/container disk (>= ${MIN_DISK_GB} GB)."
+# Only enforce on a fresh install. On a re-run the venv/model already occupy the disk, so free space is lower by design.
+if [ ! -x "$VENV/bin/python" ]; then
+  [ "$FREE_GB" -ge "$MIN_DISK_GB" ] || die "Not enough disk. Give the pod a bigger volume/container disk (>= ${MIN_DISK_GB} GB)."
+elif [ "$FREE_GB" -lt 20 ]; then
+  die "Only ${FREE_GB} GB free; need at least 20 GB for inputs/outputs."
+fi
 
 # ---- 1. system packages ------------------------------------------------------
 NEED_APT=""
@@ -67,7 +72,7 @@ if ! "$PY" -c "import vllm" >/dev/null 2>&1; then
   "$VENV/bin/pip" install "vllm==$VLLM_VERSION"
 fi
 log "installing model support packages"
-"$VENV/bin/pip" install -q -U "transformers>=4.57.0" accelerate qwen-omni-utils huggingface_hub rich pydantic
+"$VENV/bin/pip" install -q -U "transformers>=4.57.0,<5" accelerate qwen-omni-utils huggingface_hub rich pydantic
 "$VENV/bin/pip" install -q hf_transfer || { log "hf_transfer unavailable, using normal downloads"; export HF_HUB_ENABLE_HF_TRANSFER=0; }
 "$VENV/bin/pip" install -q -r "$REPO_DIR/requirements.txt"
 log "installing faster-whisper (speech-to-text, replaces the A18 agent)"

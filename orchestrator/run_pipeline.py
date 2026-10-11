@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from orchestrator.state import VideoState
+from orchestrator.state import VideoState, STAGES
 from orchestrator.progress import LiveProgress
 from orchestrator import drive_sync, preflight
 from pipeline import (
@@ -122,6 +122,21 @@ def process_video(video_name: str, input_root: Path, run_dir: Path, progress: Li
     return ok, False
 
 
+def _archive_and_reset(video_out_dir: Path, from_stage: str):
+    """Copy the outputs of from_stage and later into _previous_runs/<time>/, then mark them pending.
+    Big re-creatable folders (_clips, _frames, _audio) are not copied."""
+    import shutil
+    letters = "abcdef"
+    first = letters.index(from_stage[-1])
+    dest = video_out_dir / "_previous_runs" / time.strftime("%Y%m%d_%H%M%S")
+    for d in sorted(video_out_dir.iterdir()):
+        if d.is_dir() and d.name.startswith("stage_") and len(d.name) > 7 and d.name[6] in letters \
+                and letters.index(d.name[6]) >= first:
+            shutil.copytree(d, dest / d.name, ignore=shutil.ignore_patterns("_clips", "_frames", "_audio"))
+    VideoState(video_out_dir).reset_from(from_stage)
+    print(f"[orion] {video_out_dir.name}: old outputs from {from_stage} saved to {dest}; will re-run from {from_stage}")
+
+
 def main():
     repo_root = Path(__file__).resolve().parent.parent
     ap = argparse.ArgumentParser()
@@ -135,6 +150,9 @@ def main():
                          "Layout inside: INPUT/<video>/ and OUTPUT/. Default: $ORION_DRIVE_REMOTE.")
     ap.add_argument("--limit", type=int, default=0, help="Process at most N unfinished videos (use 1 for the first GPU test).")
     ap.add_argument("--only", default="", help="Comma-separated video folder names to process.")
+    ap.add_argument("--redo-from", default="", choices=["", *STAGES],
+                    help="Re-run this stage and the later ones for the selected videos (e.g. after a prompt change). "
+                         "The old outputs are COPIED to <video>/_previous_runs/<time>/ first; nothing is deleted.")
     args = ap.parse_args()
 
     input_root, run_dir = Path(args.input), Path(args.out)
@@ -166,6 +184,11 @@ def main():
     if args.only:
         wanted = {v.strip() for v in args.only.split(",") if v.strip()}
         videos = [v for v in videos if v in wanted]
+
+    if args.redo_from:
+        for v in videos:
+            if (run_dir / v).exists():
+                _archive_and_reset(run_dir / v, args.redo_from)
 
     # --limit counts UNFINISHED videos, so repeated runs make steady progress.
     todo = [v for v in videos if not VideoState(run_dir / v).is_fully_done()]

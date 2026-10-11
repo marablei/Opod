@@ -35,6 +35,7 @@ again at the end of the batch.
 Big regenerable scratch (_clips/, _frames/, _audio/) is never uploaded.
 """
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -220,8 +221,8 @@ class DriveSync:
             if res is None:
                 return []
             for line in res.stdout.splitlines():
-                line = line.strip()
-                if line:
+                line = line.rstrip("\r\n")  # keep spaces: Drive allows names like " video.mp4"
+                if line.strip():
                     names.append((line.rstrip("/"), line.endswith("/")))
         entries, seen = [], set()
         for name, is_dir in names:
@@ -229,7 +230,7 @@ class DriveSync:
                 entries.append((name, "dir", name)); seen.add(name)
         for name, is_dir in names:
             if not is_dir and self._video_ext(name):
-                vid = Path(name).stem
+                vid = Path(name).stem.strip()
                 if vid not in seen:
                     entries.append((vid, "file", name)); seen.add(vid)
         return sorted(entries)
@@ -252,7 +253,7 @@ class DriveSync:
         res = self._rclone(["lsf", "--files-only", self._j(self.in_root, name)])
         if res is None:
             return None
-        return sorted(line.strip() for line in res.stdout.splitlines() if line.strip())
+        return sorted(line.rstrip("\r\n") for line in res.stdout.splitlines() if line.strip())
 
     def pull_output(self) -> bool:
         """Bring back previous progress (state files, stage outputs, caches)."""
@@ -277,7 +278,12 @@ class DriveSync:
                 except OSError as e:
                     self._log_error(f"copy failed {name}: {e}"); ok = False
             else:
-                ok = self._rclone(["copyto", self._j(self.in_root, name), str(dst / name),
+                # Copy from the folder ROOT, selecting the file by exact name via --files-from-raw (no glob
+                # parsing, spaces kept). `copyto <root>:<file>` fails on rclone 1.58 with a root_folder_id.
+                ff = self.output_dir / "_pull_one.txt"
+                self.output_dir.mkdir(parents=True, exist_ok=True)
+                ff.write_text(name + "\n", encoding="utf-8")
+                ok = self._rclone(["copy", self.in_root, str(dst), "--files-from-raw", str(ff),
                                    "--stats", "0", "-q"]) is not None
         else:
             ok = self._copy(self._j(self.in_root, name), dst, update=True)
