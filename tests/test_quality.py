@@ -72,7 +72,9 @@ old_style = {"chunk_id": "CHUNK_003", "editorial_function": "Explaining a new re
              "audio_need": {"query": "upbeat background music for explainer video", "duration_sec": 10, "type": "music"}, "reasoning": "x"}
 check(has(V.validate_director(old_style, chunk), "missing keys"), "the OLD generic answer format (no beats) is rejected")
 bad = json.loads(json.dumps(good)); bad["treatment"] = "talking_head"
-check(has(V.validate_director(V.normalize_director(bad, chunk), chunk), "less than 70%"), "treatment=talking_head with mostly-document beats is rejected")
+check(has(V.validate_director(bad, chunk), "less than 70%"), "validator still rejects treatment=talking_head with mostly-document beats")
+check(V.normalize_director(bad, chunk)["treatment"] == "mixed" and V.validate_director(V.normalize_director(bad, chunk), chunk) == [],
+      "normalize corrects that contradictory treatment to 'mixed' (derived from the beats by code)")
 bad = json.loads(json.dumps(good)); bad["audio_need"] = {"query": "upbeat background music", "duration_sec": 1, "type": "music"}
 check(has(V.validate_director(V.normalize_director(bad, chunk), chunk), "too generic"), "generic audio query is rejected")
 bad = json.loads(json.dumps(good)); bad["visual_beats"] = bad["visual_beats"][:1]

@@ -58,4 +58,11 @@ assert e["visual_beats"][0]["start_sec"] == 0 and e["visual_beats"][-1]["end_sec
 B = [beat(0,16.6,"talking_head","Host speaking at a desk"), beat(0.5,2.3,"graphic_overlay","Map of the Red Sea"), beat(2.3,3.5,"broll","Military trucks"), beat(3.5,4.7,"archival_clip","Houthi rebels posing"),
      beat(4.7,6.1,"broll","Damaged boats"), beat(6.1,7.5,"broll","Houthi rebels on a tank"), beat(7.5,12.3,"graphic_overlay","Map showing Houthi ships"), beat(12.3,16.6,"graphic_overlay","Map highlighting the strait")]
 c = chunk("CHUNK_028", 16.6); e = V.normalize_director(entry("CHUNK_028", B), c); p = V.validate_director(e, c); print(len(e["visual_beats"])); assert not p, p
+# beat entirely outside the chunk (AI video CHUNK_025 style) + treatment contradicting beats (2020 video CHUNK_026 style)
+c = chunk("CHUNK_025", 14.9)
+e = V.normalize_director(entry("CHUNK_025", [beat(0,8,"talking_head","Host speaking to camera"), beat(8,14.9,"broll","City street at night"), beat(15.2,16.5,"broll","Street signs")]), c)
+assert not V.validate_director(e, c), V.validate_director(e, c)
+c = chunk("CHUNK_026", 14.0)
+en = entry("CHUNK_026", [beat(0,8,"talking_head","Host speaking to camera"), beat(8,14,"broll","Crowd in market")]); en["treatment"] = "archival_clip"
+e = V.normalize_director(en, c); assert e["treatment"] == "mixed" and not V.validate_director(e, c), V.validate_director(e, c)
 print("PASS repair")

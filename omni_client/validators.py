@@ -291,11 +291,25 @@ def normalize_director(entry: dict, chunk: dict) -> dict:
             nb = dict(b)
             nb["start_sec"] = round(max(0.0, min(float(b["start_sec"]), dur)), 1)
             nb["end_sec"] = round(max(0.0, min(float(b["end_sec"]), dur)), 1)
+            if nb["end_sec"] - nb["start_sec"] < 0.1:
+                continue                              # beat lies outside the chunk (clamped to zero length): drop it
             beats.append(nb)
             if nb.get("kind") != "talking_head":
                 host_free += max(0.0, nb["end_sec"] - nb["start_sec"])
     if beats:
         e["visual_beats"] = beats
+        # treatment must agree with the beats: derive it with code when the model contradicted itself
+        tot = sum(b["end_sec"] - b["start_sec"] for b in beats) or 1.0
+        host_share = sum(b["end_sec"] - b["start_sec"] for b in beats if b.get("kind") == "talking_head") / tot
+        kinds_present = {b.get("kind") for b in beats}
+        t = e.get("treatment")
+        if t in TREATMENTS:
+            if host_share >= 0.999:
+                e["treatment"] = "talking_head"
+            elif t == "talking_head" and host_share < 0.70:
+                e["treatment"] = "mixed"
+            elif t not in ("talking_head", "mixed") and t not in kinds_present:
+                e["treatment"] = "mixed"
     fn = dict(e.get("footage_need") or {})
     if isinstance(fn.get("query"), str):
         fn["query"] = fn["query"].strip()
