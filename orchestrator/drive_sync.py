@@ -243,14 +243,28 @@ class DriveSync:
                 line = line.rstrip("\r\n")  # keep spaces: Drive allows names like " video.mp4"
                 if line.strip():
                     names.append((line.rstrip("/"), line.endswith("/")))
+        # A video that already has results in the stages folder keeps the id it was processed under (older runs used the
+        # raw file name), so renaming rules never orphan finished work.
+        known: set[str] = set()
+        try:
+            if self.local_backend:
+                sr = Path(self.stage_root)
+                known = {p.name for p in sr.iterdir() if p.is_dir()} if sr.exists() else set()
+            else:
+                rs = self._rclone(["lsf", "--dirs-only", "--max-depth", "1", self.stage_root])
+                if rs is not None:
+                    known = {l.rstrip("\r\n").rstrip("/") for l in rs.stdout.splitlines() if l.strip()}
+        except OSError:
+            known = set()
         entries, seen = [], set()
         for name, is_dir in names:
             if is_dir:
-                vid = safe_video_id(name)
+                vid = name if name in known else safe_video_id(name)
                 entries.append((vid, "dir", name)); seen.add(vid)
         for name, is_dir in names:
             if not is_dir and self._video_ext(name):
-                vid = safe_video_id(Path(name).stem)
+                raw = Path(name).stem.strip()
+                vid = raw if raw in known else safe_video_id(raw)
                 if vid not in seen:
                     entries.append((vid, "file", name)); seen.add(vid)
         return sorted(entries)

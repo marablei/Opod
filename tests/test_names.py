@@ -38,4 +38,12 @@ with tempfile.TemporaryDirectory() as td:
         assert any(p.suffix == ".mp4" for p in (td / "in" / v).iterdir())
     names = json.loads((td / "out" / "_video_names.json").read_text(encoding="utf-8"))
     assert set(names) == set(vids) and TITLES[2] in names.values()
+    # legacy: a title that already has a results folder keeps its old (raw) id
+    legacy = Path(td / "drive_root" / "OUTPUT"); 
+    raw = TITLES[0]
+    (td / "drive_root" / "INPUT" / f"{raw}.mp4").write_bytes(b"x")
+    sr = Path(d.stage_root); (sr / raw).mkdir(parents=True, exist_ok=True)
+    vids2 = d.list_input_videos()
+    assert raw in vids2, vids2
+    assert safe_video_id(raw) not in vids2
 print("PASS names")
