@@ -67,20 +67,20 @@ def to_markdown(rep: dict) -> str:
         q, qa = v["quality"], (v["qa"] or {})
         g = lambda k: f"{qa[k]['kept']}/{qa[k]['total']}" if k in qa else "-"
         cs = v["chunk_sec"]
-        L.append(f"| {v['name'][:48]} | {_fmt_sec(q.get('duration_sec'))} | {q.get('language') or '-'} | "
+        L.append(f"| {(v.get('title') or v['name'])[:48]} | {_fmt_sec(q.get('duration_sec'))} | {q.get('language') or '-'} | "
                  f"{v['chunks'] or '-'} ({cs['min']}-{cs['max']}) | {q.get('shots') or '-'} | {g('director_sft')} | {g('style_sft')} | "
                  f"{g('story_architect_sft')} | {v['beats_per_chunk'] or '-'} | {_fmt_sec(v['total_sec'])} |" if cs else
-                 f"| {v['name'][:48]} | {_fmt_sec(q.get('duration_sec'))} | {q.get('language') or '-'} | - | - | - | - | - | - | {_fmt_sec(v['total_sec'])} |")
+                 f"| {(v.get('title') or v['name'])[:48]} | {_fmt_sec(q.get('duration_sec'))} | {q.get('language') or '-'} | - | - | - | - | - | - | {_fmt_sec(v['total_sec'])} |")
     L += ["", "## Director variety (is the output generic?)", ""]
     for v in rep["videos"]:
         t_ = ", ".join(f"{k} {c}" for k, c in sorted(v["treatments"].items(), key=lambda x: -x[1])) or "none"
         dq = v["distinct_footage_queries"]
-        L.append(f"- **{v['name'][:48]}**: treatments: {t_}" + (f"; distinct footage queries {dq[0]}/{dq[1]}" if dq else ""))
+        L.append(f"- **{(v.get('title') or v['name'])[:48]}**: treatments: {t_}" + (f"; distinct footage queries {dq[0]}/{dq[1]}" if dq else ""))
     L += ["", "## Things to look at", ""]
     any_flag = False
     for v in rep["videos"]:
         for f in _flags(v):
-            L.append(f"- {v['name'][:48]}: {f}"); any_flag = True
+            L.append(f"- {(v.get('title') or v['name'])[:48]}: {f}"); any_flag = True
     if not any_flag:
         L.append("- nothing flagged by the automatic checks")
     L += ["", "## What these numbers do NOT tell you", "",

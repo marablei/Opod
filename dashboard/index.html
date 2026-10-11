@@ -136,7 +136,7 @@ function videoCard(v){
   const state = v.fully_done ? ["done","DONE"] : failed ? ["bad","FAILED at "+STAGE_LABEL[v.failed_stage]] : v.is_current ? ["run","RUNNING"] : ["idle","waiting / partial"];
   const q = v.quality||{}, p = v.stage_c_progress;
   const card = h("div",{class:"vid "+(v.is_current?"current":"")+(failed?" failed":"")});
-  card.append(h("div",{class:"vtop"}, h("div",{class:"vname"}, v.name),
+  card.append(h("div",{class:"vtop"}, h("div",{class:"vname",title:v.name}, v.title||v.name),
      h("div",null, h("span",{class:"pill "+state[0]}, state[1]), " ", h("button",{onclick:()=>openVideo(v.name)},"details"))));
   card.append(h("div",{class:"chips"}, Object.keys(STAGE_LABEL).map(s=>stageChip(v,s))));
   if (p && p.total){

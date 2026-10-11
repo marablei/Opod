@@ -122,8 +122,10 @@ def video_summary(vdir: Path) -> dict:
         q_ = (d.get("footage_need") or {}).get("query")
         if q_ and q_ != "none":
             queries.append(q_.lower())
+    titles = _json(vdir.parent / "_video_names.json", {}) or {}
     out = {
         "name": vdir.name,
+        "title": titles.get(vdir.name),
         "stages": stages,
         "timing_sec": {k[:-4]: v for k, v in tm.items() if k.endswith("_sec")},
         "total_sec": round(sum(v for k, v in tm.items() if k.endswith("_sec")), 1),

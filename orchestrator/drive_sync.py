@@ -34,6 +34,7 @@ again at the end of the batch.
 
 Big regenerable scratch (_clips/, _frames/, _audio/) is never uploaded.
 """
+import json
 import os
 import re
 import shutil
@@ -42,6 +43,24 @@ import time
 from pathlib import Path
 
 EXCLUDE_DIRS = ("_clips", "_frames", "_audio")
+
+
+def safe_video_id(raw: str) -> str:
+    """Folder-safe id for a video. Names that are already safe (e.g. "V1", "video_003") are kept EXACTLY, so existing
+    progress is never orphaned. Long/odd titles (spaces, quotes, ¿ ¦ ’ ( ) ...) become readable ASCII + a short fixed
+    hash: 'Brazil’s Lula da Silva, explained (1080p_24fps_H264-128kbit_AAC-English)' -> 'Brazil_s_Lula_da_Silva_explained_3f9a1c'.
+    The same title always gives the same id (resume works), two different titles never collide."""
+    import hashlib
+    import re
+    import unicodedata
+    raw = raw.strip()
+    if re.fullmatch(r"[A-Za-z0-9._-]{1,80}", raw):
+        return raw
+    t = re.sub(r"\s*\(\d{3,4}p[^)]*\)\s*$", "", raw)             # drop a trailing "(1080p_25fps_H264-...)" download tag
+    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii")
+    t = re.sub(r"[^A-Za-z0-9]+", "_", t).strip("_")[:48].rstrip("_")
+    h = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:6]
+    return f"{t}_{h}" if t else f"video_{h}"
 
 
 class DriveSync:
@@ -227,10 +246,11 @@ class DriveSync:
         entries, seen = [], set()
         for name, is_dir in names:
             if is_dir:
-                entries.append((name, "dir", name)); seen.add(name)
+                vid = safe_video_id(name)
+                entries.append((vid, "dir", name)); seen.add(vid)
         for name, is_dir in names:
             if not is_dir and self._video_ext(name):
-                vid = Path(name).stem.strip()
+                vid = safe_video_id(Path(name).stem)
                 if vid not in seen:
                     entries.append((vid, "file", name)); seen.add(vid)
         return sorted(entries)
@@ -238,6 +258,12 @@ class DriveSync:
     def list_input_videos(self) -> list[str]:
         entries = self._list_input_entries()
         self._input_index = {vid: (kind, name) for vid, kind, name in entries}
+        try:  # id -> original title, so reports/dashboard can show the real name
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            titles = {vid: (Path(n).stem if k == "file" else n) for vid, k, n in entries}
+            (self.output_dir / "_video_names.json").write_text(json.dumps(titles, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
         return [vid for vid, _, _ in entries]
 
     def list_input_files(self, video_id: str) -> list[str] | None:
