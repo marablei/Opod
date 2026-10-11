@@ -195,11 +195,72 @@ def validate_director(entry: dict, chunk: dict) -> list[str]:
     return p
 
 
+def _query_from_beats(beats) -> str:
+    """Search phrase taken from the model's own description of the longest non-host beat (at most 12 words)."""
+    best = None
+    for b in beats or []:
+        if isinstance(b, dict) and b.get("kind") != "talking_head" and isinstance(b.get("what"), str):
+            d = (_num(b.get("end_sec")) or 0) - (_num(b.get("start_sec")) or 0)
+            if best is None or d > best[0]:
+                best = (d, b["what"])
+    return " ".join(best[1].split()[:12]) if best else ""
+
+
+MUSIC_UNSPECIFIED = "music bed present; character not specified"
+
+
+def salvage_audio(entry: dict, problems: list[str]) -> dict | None:
+    """Last resort for the judge: when the ONLY remaining problem is a generic audio query after all re-asks, keep the chunk
+    (its beats are fine) and record honestly that music is present but was not described. Returns None when not applicable."""
+    if problems and all("too generic" in x for x in problems) and isinstance(entry.get("audio_need"), dict):
+        e = dict(entry); an = dict(e["audio_need"]); an["query"] = MUSIC_UNSPECIFIED; e["audio_need"] = an
+        return e
+    return None
+
+
+def _repair_overlaps(beats, dur: float, min_len: float = 0.4):
+    """A cutaway shown OVER the host (host 0-14.6, chart 2.8-6.8) is a normal editing pattern, not a mistake. Rebuild it as
+    ordered, non-overlapping beats: later/shorter beats are painted over earlier/longer ones, leftovers of the host become
+    their own beats (host 0-2.8, chart 2.8-6.8, host 6.8-14.6). Pure code, no model call. Untouched when nothing overlaps."""
+    if not isinstance(beats, list):
+        return beats
+    items = []
+    for b in beats:
+        if isinstance(b, dict) and _num(b.get("start_sec")) is not None and _num(b.get("end_sec")) is not None:
+            s, e = max(0.0, min(float(b["start_sec"]), dur)), max(0.0, min(float(b["end_sec"]), dur))
+            if e > s:
+                items.append((s, e, b))
+            continue
+        return beats                                   # malformed beat: leave for the validator to report
+    items.sort(key=lambda t: (t[0], -(t[1] - t[0])))
+    if all(items[i][0] >= items[i - 1][1] - 0.05 for i in range(1, len(items))):
+        return beats                                   # nothing overlaps: keep exactly what the model said
+    placed: list = []                                  # (start, end, beat dict)
+    for s, e, b in items:
+        nxt = []
+        for ps, pe, pb in placed:
+            if pe <= s or ps >= e:
+                nxt.append((ps, pe, pb)); continue
+            if ps < s:
+                nxt.append((ps, s, pb))
+            if pe > e:
+                nxt.append((e, pe, pb))
+        nxt.append((s, e, b))
+        placed = nxt
+    out = []
+    for s, e, b in sorted(placed, key=lambda t: t[0]):
+        if e - s >= min_len:
+            nb = dict(b); nb["start_sec"], nb["end_sec"] = round(s, 1), round(e, 1)
+            out.append(nb)
+    return out or beats
+
+
 def normalize_director(entry: dict, chunk: dict) -> dict:
     """Overwrite what code knows exactly: chunk_id, rounding, and the durations."""
     e = dict(entry)
     e["chunk_id"] = chunk["chunk_id"]
     dur = float(chunk["duration_sec"])
+    e["visual_beats"] = _repair_overlaps(e.get("visual_beats"), dur)
     beats = []
     host_free = 0.0
     for b in e.get("visual_beats") or []:
@@ -215,6 +276,12 @@ def normalize_director(entry: dict, chunk: dict) -> dict:
     fn = dict(e.get("footage_need") or {})
     if isinstance(fn.get("query"), str):
         fn["query"] = fn["query"].strip()
+        if beats and host_free == 0 and all(b.get("kind") == "talking_head" for b in beats):
+            fn["query"] = "none"                      # only the host is on screen: there is nothing to source
+        elif fn["query"].lower() == "none" and host_free > 0:
+            q = _query_from_beats(beats)              # model said "none" but showed other visuals: use ITS OWN longest beat text
+            if q:
+                fn["query"] = q
         none_q = fn["query"].lower() == "none"
         fn["duration_sec"] = 0 if none_q else round(host_free if host_free > 0 else dur, 1)
         if none_q:

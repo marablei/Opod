@@ -63,6 +63,7 @@ DIRECTOR_SCHEMA = (
     'Rules: describe only what is clearly visible or audible - if you cannot tell, use kind "other"; never invent. '
     'For audio_need, describe what you actually HEAR (mood, instrument or texture, tempo); use "none" when there is only speech. '
     'Queries are short search phrases, not descriptions of the whole clip, and contain no timestamps. '
+    'Name a person, brand, app or product only if the name is spoken in the transcript or readable on screen; otherwise say "man", "woman", "app". '
     'Do not add other keys.'
 )
 FOOTAGE_SCHEMA = (
@@ -83,7 +84,10 @@ STORY_SCHEMA = (
     ' Output ONE JSON object with exactly these keys: "act_1_hook", "act_1_anchor", "act_3_payoff", '
     '"act_3_closing" (each an object) and "act_2_escalation" (a list of 1 to 4 such objects). Every object has '
     '"segment_id" (written exactly like the ids in the transcript, for example "seg_12"), "function" (a short '
-    'phrase) and "note" (one sentence). Only use segment ids that appear in the transcript. Do not add other keys.'
+    'phrase) and "note" (one sentence). Only use segment ids that appear in the transcript. '
+    'A sponsor or advertisement read (the host promoting a product or app, a "link in the description") is NOT a story step: '
+    'never use it as the hook, anchor, escalation or payoff, and choose the story beats from the actual argument of the video. '
+    'Do not add other keys.'
 )
 
 DIRECTOR_SYSTEM = (

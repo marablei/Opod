@@ -51,6 +51,11 @@ def _validate_director(entries: list[dict], chunks_by_id: dict, log_path: Path) 
         entry = validators.normalize_director(_strip_meta(entry), chunk)
         problems = validators.validate_director(entry, chunk)
         if problems:
+            fixed = validators.salvage_audio(entry, problems)
+            if fixed is not None and not validators.validate_director(fixed, chunk):
+                entry, problems = fixed, []
+                _log_rejection(log_path, "director", f"{chunk['chunk_id']} kept: audio query stayed generic after re-asks; stored as 'music bed present; character not specified'")
+        if problems:
             _log_rejection(log_path, "director", f"{chunk['chunk_id']} rejected: " + " | ".join(problems))
             continue
         validated.append(entry)

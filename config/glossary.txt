@@ -6,3 +6,19 @@ Jio
 Airtel
 BSNL
 Vodafone Idea
+# finance / business names seen in the first test videos
+BlackRock
+Vanguard
+State Street
+Vested
+Aladdin
+iShares
+ETF
+ChatGPT
+Nvidia
+Larry Fink
+Jensen Huang
+Strait of Hormuz
+DigiLocker
+EMI
+NRI
