@@ -11,8 +11,11 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--log", required=True)
 ap.add_argument("--fail-after", type=int, default=-1)
+ap.add_argument("--delay", type=float, default=0.0, help="seconds each answer takes (to watch the dashboard live)")
+ap.add_argument("--invalid-every", type=int, default=0, help="every Nth Director call answers INVALID first (tests the re-ask loop)")
 args = ap.parse_args()
 calls = 0
+director_calls = 0
 
 
 class H(BaseHTTPRequestHandler):
@@ -26,6 +29,7 @@ class H(BaseHTTPRequestHandler):
         global calls
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         calls += 1
+        import time as _t; _t.sleep(args.delay)
         if args.fail_after >= 0 and calls > args.fail_after:
             self.send_response(500); self.end_headers(); self.wfile.write(b"gpu died"); return
         system = body["messages"][0]["content"]
@@ -36,19 +40,32 @@ class H(BaseHTTPRequestHandler):
             kind = "smoke"
             out = {"video": "test pattern", "audio": "tone", "frames_seen": types.count("image_url")}
         elif "documentary editor" in system:
+            global director_calls
             kind = "director"
-            out = {"editorial_function": "context", "treatment": "b-roll over narration",
-                   "footage_need": {"query": "wall street trading floor", "duration_sec": 4},
-                   "audio_need": {"query": "tense low strings, no vocals", "duration_sec": 12, "type": "music"},
-                   "reasoning": "narration introduces a new actor (\u0627\u0644\u0631\u0627\u0648\u064a)"}
+            director_calls += 1
+            cid = re.search(r"chunk_id: (\S+)", text).group(1)
+            dur = float(re.search(r"chunk_duration_sec: ([\d.]+)", text).group(1))
+            retry = "rejected by an automatic check" in text
+            if args.invalid_every and director_calls % args.invalid_every == 0 and not retry:
+                out = {"chunk_id": cid, "editorial_function": "context", "treatment": "talking_head", "visual_beats": [],
+                       "footage_need": {"query": "none", "duration_sec": 99}, "audio_need": {"query": "upbeat music", "duration_sec": 1, "type": "music"},
+                       "reasoning": "x"}
+            else:
+                out = {"chunk_id": cid, "editorial_function": "introduce the topic", "treatment": "mixed",
+                       "visual_beats": [{"start_sec": 0, "end_sec": round(dur * 0.6, 1), "kind": "talking_head", "what": "host speaking to camera"},
+                                        {"start_sec": round(dur * 0.6, 1), "end_sec": dur, "kind": "document_or_screenshot", "what": "document close-up with highlighted text"}],
+                       "footage_need": {"query": "official circular document close-up", "duration_sec": 0},
+                       "audio_need": {"query": "none", "duration_sec": 0, "type": "none"},
+                       "reasoning": "narration introduces a new actor (\u0627\u0644\u0631\u0627\u0648\u064a)"}
         elif "footage researcher" in system:
             kind = "footage"
-            out = {"decision": "reject_pool", "confirmed_asset_ids": [], "rejected_asset_ids": [],
+            out = {"decision": "reject", "confirmed_asset_ids": [], "rejected_asset_ids": [],
                    "reasoning": "no candidates supplied"}
         elif "style analyst" in system:
             kind = "style"
-            out = {k: "x" for k in ["pacing_target", "typography_system", "color_lut",
-                                    "graphic_density", "sound_design_intensity", "map_motion_frequency"]}
+            out = {k: "bold white sans-serif captions" for k in ["pacing_target", "typography_system", "color_lut",
+                                    "graphic_density", "sound_design_intensity"]}
+            out["map_motion_frequency"] = "not_present"
         else:
             kind = "story"
             ids = re.findall(r"seg_(\S+?):", text)

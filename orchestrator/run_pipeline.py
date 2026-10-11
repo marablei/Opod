@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator.state import VideoState, STAGES
 from orchestrator.progress import LiveProgress
-from orchestrator import drive_sync, preflight
+from orchestrator import drive_sync, preflight, events
 from pipeline import (
     stage_a_unified_dna, stage_b_chunking, stage_d_judge,
     stage_e_dataset_extractor, stage_f_sft_qa, stage_g_aggregate,
@@ -63,12 +63,16 @@ def process_video(video_name: str, input_root: Path, run_dir: Path, progress: Li
     """Returns (ok, skipped)."""
     video_out_dir = run_dir / video_name
     state = VideoState(video_out_dir)
+    events.set_video(video_name)
 
     if state.is_fully_done():
+        events.emit("video_skipped", reason="already done on an earlier run")
         return True, True  # finished on a previous run/pod
+    events.emit("video_start")
 
     if drive.enabled and not drive.pull_input(video_name):
         _fail_note(state, "could not pull INPUT bundle from Drive")
+        events.emit("video_failed", stage="pull_input", error="could not pull INPUT bundle from Drive")
         progress.mark_video_failed(video_name, "pull_input", "could not pull INPUT bundle from Drive")
         drive.push_video(video_name)
         return False, False
@@ -80,6 +84,7 @@ def process_video(video_name: str, input_root: Path, run_dir: Path, progress: Li
     if problems:
         for p in problems:
             _fail_note(state, f"preflight: {p}")
+        events.emit("video_failed", stage="preflight", error="; ".join(problems))
         progress.mark_video_failed(video_name, "preflight", "; ".join(problems))
         drive.push_video(video_name)
         return False, False
@@ -96,12 +101,14 @@ def process_video(video_name: str, input_root: Path, run_dir: Path, progress: Li
             break
         progress.set_stage(video_name, stage)
         state.mark_in_progress(stage)
+        events.emit("stage_start", stage=stage)
         drive.push_video(video_name)
         t0 = time.time()
         try:
             STAGE_FUNCS[stage](video_input_dir=local_in, video_out_dir=video_out_dir)
             elapsed = time.time() - t0
             state.mark_done(stage, elapsed)
+            events.emit("stage_done", stage=stage, sec=round(elapsed, 1))
             progress.record_stage_time(stage, elapsed)
             if stage == "stage_a":
                 report = preflight.quality_report(video_out_dir)
@@ -110,12 +117,14 @@ def process_video(video_name: str, input_root: Path, run_dir: Path, progress: Li
             drive.push_video(video_name)
         except Exception as e:
             state.mark_failed(stage, f"{e}\n{traceback.format_exc()}")
+            events.emit("stage_failed", stage=stage, error=str(e)[:600])
             progress.mark_video_failed(video_name, stage, str(e))
             drive.push_video(video_name)
             ok = False
             break
 
     stage_c_omni.CHECKPOINT_HOOK = None
+    events.emit("video_done" if ok else "video_failed_final", ok=ok)
     if ok and drive.enabled and os.environ.get("ORION_CLEAN_INPUT", "0") == "1":
         # OFF by default: nothing is ever deleted. Opt in only if the pod disk is too small.
         drive.clean_input(video_name)
@@ -159,6 +168,8 @@ def main():
     input_root.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    events.configure(run_dir)
+    events.emit("run_start", args=sys.argv[1:], mode=stage_c_omni.MODE, pid=os.getpid())
     drive = drive_sync.DriveSync.from_env(args.drive, input_root, run_dir)
     drive_sync.set_default(drive)
     print(f"[orion] mode={stage_c_omni.MODE}  drive={drive.describe()}")
@@ -197,7 +208,8 @@ def main():
         todo = todo[: args.limit]
     print(f"[orion] {len(videos)} videos found: {already_done} already done, {len(todo)} to process this run")
 
-    progress = LiveProgress(total_videos=len(todo), run_dir=run_dir)
+    progress = LiveProgress(total_videos=len(todo), run_dir=run_dir, queue=todo)
+    events.emit("queue", videos=todo, already_done=already_done)
     consecutive_failures = 0
     with progress:
         for name in todo:
@@ -212,6 +224,7 @@ def main():
                       f"re-run the same command; finished work is kept.")
                 break
 
+    events.set_video(None)
     # Stage G covers every video that has outputs (this run's AND earlier runs').
     stage_g_aggregate.run(run_dir=run_dir, video_ids=videos)
     progress.write_summary_csv()
@@ -220,6 +233,14 @@ def main():
     if still_failing:
         print(f"[orion] WARNING: these videos could not be synced to Drive: {still_failing}. "
               f"Copy {run_dir} out of the pod manually before terminating it.")
+    try:
+        from orchestrator import report
+        rp = report.write(run_dir, videos)
+        print(f"[orion] run report: {rp}")
+    except Exception as e:  # the report must never fail the run
+        print(f"[orion] could not write run report: {e}")
+    events.emit("run_end", processed=len(progress.results))
+    drive.push_batch_files()
     print(f"\nBatch complete. Summary: {run_dir / '_batch_summary.csv'}")
 
 

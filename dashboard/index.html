@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orion Live</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#2a333d; --text:#e6edf3; --muted:#8b98a5;
+  --ok:#3fb950; --run:#58a6ff; --warn:#d29922; --bad:#f85149; --idle:#6e7681;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f4f6f8;--panel:#fff;--panel2:#f0f3f6;--line:#d5dce3;--text:#1b2430;--muted:#5d6b7a;
+        --ok:#1a7f37;--run:#0969da;--warn:#9a6700;--bad:#cf222e;--idle:#8c959f}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--sans)}
+header{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+h1{font-size:16px;margin:0;letter-spacing:.04em}
+.pill{padding:3px 10px;border-radius:99px;font-weight:600;font-size:12px;border:1px solid currentColor}
+.pill.run{color:var(--run)} .pill.done{color:var(--ok)} .pill.idle{color:var(--idle)} .pill.bad{color:var(--bad)} .pill.warn{color:var(--warn)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--idle);margin-right:6px}
+.dot.on{background:var(--ok)} .dot.off{background:var(--bad)}
+.kv{display:flex;flex-direction:column;font-size:12px;color:var(--muted)} .kv b{color:var(--text);font:600 13px var(--mono)}
+main{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;padding:16px 20px}
+@media (max-width:980px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+section h2{margin:0 0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.vid{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--panel2)}
+.vid.current{border-color:var(--run);box-shadow:0 0 0 1px var(--run) inset}
+.vid.failed{border-color:var(--bad)}
+.vtop{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+.vname{font-weight:600;word-break:break-word}
+.chips{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+.chip{font:600 12px var(--mono);padding:4px 8px;border-radius:6px;border:1px solid var(--line);color:var(--idle);min-width:84px}
+.chip small{display:block;font-weight:400;color:var(--muted)}
+.chip.done{color:var(--ok);border-color:var(--ok)} .chip.in_progress{color:var(--run);border-color:var(--run);animation:pulse 1.4s infinite}
+.chip.failed{color:var(--bad);border-color:var(--bad)}
+@keyframes pulse{50%{opacity:.55}}
+.bar{height:8px;border-radius:5px;background:var(--line);overflow:hidden;margin:6px 0}
+.bar>i{display:block;height:100%;background:var(--run)}
+.bar.ok>i{background:var(--ok)} .bar.mem>i{background:var(--warn)}
+.meta{font:12px var(--mono);color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 14px}
+.warn{color:var(--warn);font-size:12px;margin-top:6px} .err{color:var(--bad);font:12px var(--mono);margin-top:6px;white-space:pre-wrap;word-break:break-word}
+button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer;font:12px var(--sans)}
+button:hover{border-color:var(--run)}
+.feed{max-height:420px;overflow:auto;font:12px var(--mono)}
+.ev{display:grid;grid-template-columns:62px 1fr;gap:8px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.ev .t{color:var(--muted)} .ev.bad{color:var(--bad)} .ev.good{color:var(--ok)} .ev.warn{color:var(--warn)}
+pre{margin:0;font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;background:var(--panel2);padding:8px;border-radius:6px;border:1px solid var(--line)}
+.tabs{display:flex;gap:6px;margin-bottom:8px}
+.tabs button.on{border-color:var(--run);color:var(--run)}
+.empty{color:var(--muted);padding:18px;text-align:center;border:1px dashed var(--line);border-radius:8px}
+#drawer{position:fixed;inset:0 0 0 auto;width:min(860px,100%);background:var(--panel);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .2s;z-index:10;overflow:auto;padding:16px}
+#drawer.open{transform:none}
+table{border-collapse:collapse;width:100%;font-size:12px} th,td{border-bottom:1px solid var(--line);padding:6px 6px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+td.bad{color:var(--bad)} .tag{font:11px var(--mono);padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ORION · LIVE</h1>
+  <span id="pill" class="pill idle">loading…</span>
+  <div class="kv">elapsed<b id="elapsed">-</b></div>
+  <div class="kv">videos<b id="vcount">-</b></div>
+  <div class="kv">last activity<b id="lastev">-</b></div>
+  <div class="kv">model server<b id="srv">-</b></div>
+  <div class="kv">GPU<b id="gpu">-</b></div>
+  <div class="kv">disk free<b id="disk">-</b></div>
+  <div class="kv" id="costbox" style="display:none">est. cost<b id="cost">-</b></div>
+  <div class="kv" style="margin-left:auto">refreshed<b id="upd">-</b></div>
+</header>
+<main>
+  <div>
+    <section><h2>Videos</h2><div id="videos"></div></section>
+  </div>
+  <div style="display:grid;gap:16px;align-content:start">
+    <section id="setupbox" style="display:none"><h2>Pod setup (real steps from the setup scripts)</h2><div id="setup"></div></section>
+    <section><h2>Problems (real errors, newest last)</h2><div id="problems"></div></section>
+    <section><h2>Live events</h2><div class="feed" id="feed"></div></section>
+    <section><h2>Corpus so far (final rows on disk)</h2><div class="grid2" id="corpus"></div></section>
+    <section><h2>Logs</h2>
+      <div class="tabs"><button id="tabp" class="on">pipeline</button><button id="tabm">model server</button></div>
+      <pre id="log"></pre></section>
+  </div>
+</main>
+<aside id="drawer"><button id="close">close ✕</button><div id="dbody"></div></aside>
+<script>
+"use strict";
+const Q = location.search;               // keeps ?key=... on API calls
+const $ = s => document.querySelector(s);
+function h(tag, props, ...kids){
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(props||{})){
+    if (k==="class") e.className=v; else if (k==="onclick") e.onclick=v; else if (v!==null && v!==undefined) e.setAttribute(k,v);
+  }
+  for (const c of kids.flat()){ if (c===null||c===undefined||c===false) continue; e.append(c.nodeType?c:document.createTextNode(String(c))); }
+  return e;
+}
+const fmtDur = s => s==null ? "-" : s>=3600 ? (s/3600).toFixed(2)+" h" : s>=90 ? (s/60).toFixed(1)+" min" : Math.round(s)+" s";
+const STAGE_LABEL = {stage_a:"A extract",stage_b:"B chunk",stage_c:"C model",stage_d:"D judge",stage_e:"E rows",stage_f:"F QA"};
+let logTab = "pipeline", last = null;
+
+function evLine(e, now){
+  const age = Math.max(0, now - e.t);
+  const who = e.video ? e.video.slice(0,22)+" · " : "";
+  let txt = e.kind, cls = "";
+  switch(e.kind){
+    case "run_start": txt = "run started "+(e.args||[]).join(" "); break;
+    case "run_end": txt = "run finished"; cls="good"; break;
+    case "queue": txt = "queue: "+(e.videos||[]).length+" video(s) to do, "+e.already_done+" already done"; break;
+    case "video_start": txt = who+"started"; break;
+    case "video_skipped": txt = who+"skipped ("+e.reason+")"; break;
+    case "video_done": txt = who+"finished OK"; cls="good"; break;
+    case "video_failed": case "video_failed_final": txt = who+"FAILED "+(e.stage||"")+" "+(e.error||""); cls="bad"; break;
+    case "stage_start": txt = who+(STAGE_LABEL[e.stage]||e.stage)+" started"; break;
+    case "stage_done": txt = who+(STAGE_LABEL[e.stage]||e.stage)+" done in "+fmtDur(e.sec); cls="good"; break;
+    case "stage_failed": txt = who+(STAGE_LABEL[e.stage]||e.stage)+" FAILED: "+(e.error||""); cls="bad"; break;
+    case "model_call": txt = who+e.label+" · try "+e.attempt+" · "+e.sec+" s · "+(e.valid?"valid":"REJECTED: "+(e.problems||[]).join("; ")); cls=e.valid?"":"warn"; break;
+    case "model_call_cached": txt = who+e.label+" · reused from cache"; break;
+  }
+  return h("div",{class:"ev "+cls}, h("span",{class:"t"}, fmtDur(age)+" ago"), h("span",null,txt));
+}
+
+function stageChip(v, s){
+  const st = v.stages[s], t = v.timing_sec[s];
+  let sub = st==="done" ? fmtDur(t) : st==="in_progress" && v.is_current && v.current_stage===s && v.current_stage_running_sec!=null ? fmtDur(v.current_stage_running_sec) : st;
+  return h("div",{class:"chip "+st, title:s}, STAGE_LABEL[s], h("small",null,sub));
+}
+
+function videoCard(v){
+  const failed = !!v.failed_stage;
+  const state = v.fully_done ? ["done","DONE"] : failed ? ["bad","FAILED at "+STAGE_LABEL[v.failed_stage]] : v.is_current ? ["run","RUNNING"] : ["idle","waiting / partial"];
+  const q = v.quality||{}, p = v.stage_c_progress;
+  const card = h("div",{class:"vid "+(v.is_current?"current":"")+(failed?" failed":"")});
+  card.append(h("div",{class:"vtop"}, h("div",{class:"vname"}, v.name),
+     h("div",null, h("span",{class:"pill "+state[0]}, state[1]), " ", h("button",{onclick:()=>openVideo(v.name)},"details"))));
+  card.append(h("div",{class:"chips"}, Object.keys(STAGE_LABEL).map(s=>stageChip(v,s))));
+  if (p && p.total){
+    const pct = Math.min(100, Math.round(100*p.done/p.total));
+    card.append(h("div",{class:"meta"}, ["model calls "+p.done+"/"+p.total, "reused from cache "+p.cache_hits, "re-asked after a rejected answer "+p.retried, "gave up "+p.gave_up, p.current?("now: "+p.current):""].filter(Boolean).map(x=>h("span",null,x))));
+    card.append(h("div",{class:"bar "+(v.stages.stage_c==="done"?"ok":"")}, h("i",{style:"width:"+pct+"%"})));
+  }
+  const m = [];
+  if (q.duration_sec) m.push("length "+fmtDur(q.duration_sec));
+  if (q.language) m.push("language "+q.language+(q.language_probability?" ("+Math.round(q.language_probability*100)+"%)":""));
+  if (v.chunks) m.push("chunks "+v.chunks+" ("+v.chunk_sec.min+"–"+v.chunk_sec.max+" s)");
+  if (q.shots) m.push("shots "+q.shots);
+  if (v.total_sec) m.push("stage time "+fmtDur(v.total_sec));
+  if (v.beats_per_chunk!=null) m.push("beats/chunk "+v.beats_per_chunk);
+  if (v.qa) m.push("rows kept: "+Object.entries(v.qa).map(([k,x])=>k.replace("_sft","")+" "+x.kept+"/"+x.total).join(", "));
+  if (m.length) card.append(h("div",{class:"meta"}, m.map(x=>h("span",null,x))));
+  if (Object.keys(v.treatments||{}).length) card.append(h("div",{class:"meta"}, "treatments: "+Object.entries(v.treatments).map(([k,c])=>k+" "+c).join(", ")));
+  (v.warnings||[]).forEach(w=>card.append(h("div",{class:"warn"},"⚠ "+w)));
+  const rj = Object.entries(v.rejected||{}); if (rj.length) card.append(h("div",{class:"warn"},"Judge rejected: "+rj.map(([k,c])=>k+" "+c).join(", ")));
+  if (v.has_errors && !v.fully_done) card.append(h("div",{class:"err"}, v.errors_tail.slice(-3).join("\n")));
+  return card;
+}
+
+function render(s){
+  last = s; const r = s.run, m = s.machine;
+  const pill = $("#pill");
+  if (!r.started_at){ pill.className="pill idle"; pill.textContent="NO RUN YET"; }
+  else if (r.running){ pill.className="pill run"; pill.textContent="RUNNING"; }
+  else if (s.videos.some(v=>v.failed_stage)){ pill.className="pill bad"; pill.textContent="STOPPED WITH FAILURES"; }
+  else { pill.className="pill done"; pill.textContent="FINISHED / IDLE"; }
+  $("#elapsed").textContent = fmtDur(r.elapsed_sec);
+  const done = s.videos.filter(v=>v.fully_done).length;
+  $("#vcount").textContent = done+" done / "+s.videos.length+" seen"+(r.total_videos?(" · this run "+(r.completed||0)+"/"+r.total_videos):"");
+  const age = r.last_event_age_sec;
+  const le = $("#lastev"); le.textContent = age==null?"-":fmtDur(age)+" ago";
+  le.style.color = (r.running && age>240) ? "var(--bad)" : "";
+  $("#srv").replaceChildren(h("span",{class:"dot "+(m.model_server.up?"on":"off")}), m.model_server.up?"up":"DOWN");
+  const g = m.gpu && m.gpu[0];
+  $("#gpu").textContent = g ? g.util_pct+"% · "+(g.mem_used_mb/1024).toFixed(1)+"/"+(g.mem_total_mb/1024).toFixed(0)+" GB · "+g.temp_c+"°C" : "no GPU info";
+  $("#disk").textContent = m.disk ? m.disk.free_gb+" GB" : "-";
+  if (r.cost_so_far!=null){ $("#costbox").style.display=""; $("#cost").textContent="$"+r.cost_so_far+" @ $"+r.price_per_hr+"/h"; }
+  $("#upd").textContent = new Date().toLocaleTimeString();
+
+  const vb = $("#videos"); vb.replaceChildren();
+  if (!s.videos.length) vb.append(h("div",{class:"empty"},"No video has been started yet. This page fills in as soon as the pipeline writes its first state file."));
+  [...s.videos].sort((a,b)=>(b.is_current-a.is_current)||a.name.localeCompare(b.name)).forEach(v=>vb.append(videoCard(v)));
+
+  const ph = (s.setup && s.setup.phases) || [];
+  $("#setupbox").style.display = ph.length ? "" : "none";
+  if (ph.length){
+    const box = $("#setup"); box.replaceChildren();
+    ph.forEach((x,i)=>{
+      const next = ph[i+1] ? ph[i+1].t : s.now, running = !ph[i+1] && !["setup_complete","pipeline_started","run_prepare"].includes(x.phase);
+      box.append(h("div",{class:"ev "+(running?"warn":"good")}, h("span",{class:"t"}, fmtDur(next-x.t)),
+        h("span",null,(running?"▶ now: ":"✓ ")+x.phase.replace(/_/g," ")+(x.detail?" — "+x.detail:""))));
+    });
+    if (s.setup.log && s.setup.log.length && !r.running) box.append(h("pre",null,s.setup.log.join("\n")));
+  }
+  const pr = $("#problems"); pr.replaceChildren();
+  const probs = [];
+  if (!m.model_server.up && r.running) probs.push(["bad","Model server is NOT answering on port "+m.model_server.port]);
+  if (r.running && r.last_event_age_sec>240) probs.push(["warn","No pipeline event for "+fmtDur(r.last_event_age_sec)+" while running (a single long call can take 1–2 min)"]);
+  if (m.sync_errors.count) probs.push(["warn","Drive sync errors logged: "+m.sync_errors.count+" (last: "+(m.sync_errors.tail.slice(-1)[0]||"")+")"]);
+  s.recent_problems.slice(-8).forEach(e=>probs.push(["bad",(e.video?e.video.slice(0,20)+" · ":"")+e.kind+" "+(e.stage||e.label||"")+": "+(e.error||(e.problems||[]).join("; "))]));
+  if (!probs.length) pr.append(h("div",{class:"empty"},"no errors recorded"));
+  probs.forEach(([c,t])=>pr.append(h("div",{class:"ev "+c}, h("span",{class:"t"},c==="bad"?"error":"note"), h("span",null,t))));
+
+  const feed = $("#feed"), atBottom = feed.scrollTop+feed.clientHeight >= feed.scrollHeight-30;
+  feed.replaceChildren(...s.events.map(e=>evLine(e,s.now)));
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
+
+  $("#corpus").replaceChildren(...Object.entries(s.corpus_rows).map(([k,c])=>h("div",{class:"kv"},k.replace("_sft.jsonl",""),h("b",null,c))));
+  $("#log").textContent = (logTab==="pipeline" ? s.logs.pipeline : s.logs.model_server).join("\n") || "(log file not found or empty)";
+}
+
+async function poll(){
+  try{
+    const r = await fetch("api/state"+Q, {cache:"no-store"});
+    if (!r.ok) throw new Error("HTTP "+r.status);
+    render(await r.json());
+  }catch(e){
+    const p = $("#pill"); p.className="pill bad"; p.textContent="DASHBOARD CANNOT READ STATE: "+e.message;
+  }
+}
+$("#tabp").onclick = ()=>{logTab="pipeline"; $("#tabp").className="on"; $("#tabm").className=""; last&&render(last)};
+$("#tabm").onclick = ()=>{logTab="model"; $("#tabm").className="on"; $("#tabp").className=""; last&&render(last)};
+$("#close").onclick = ()=>$("#drawer").classList.remove("open");
+
+async function openVideo(name){
+  const body = $("#dbody"); body.replaceChildren(h("p",null,"loading…")); $("#drawer").classList.add("open");
+  const r = await fetch("api/video"+(Q?Q+"&":"?")+"name="+encodeURIComponent(name));
+  const d = await r.json(); body.replaceChildren();
+  if (d.error){ body.append(h("p",null,d.error)); return; }
+  body.append(h("h2",null,d.name));
+  body.append(h("p",{class:"meta"}, "Spot-check: play each time range in the video and compare with the beats. Red = answer rejected by the checks."));
+  const t = h("table",null, h("tr",null,["chunk","time (s)","cut","shots","what is said","Director answer"].map(x=>h("th",null,x))));
+  d.chunks.forEach(c=>{
+    const ans = !c.answered ? "(no answer yet)" : [
+      h("div",null,h("span",{class:"tag"},c.treatment||"?")," ",c.function||""),
+      ...(c.beats||[]).map(b=>h("div",null,"["+b.start_sec+"–"+b.end_sec+"] ",h("span",{class:"tag"},b.kind)," "+b.what)),
+      h("div",{class:"meta"},"footage: "+((c.footage||{}).query||"-")+" · audio: "+((c.audio||{}).query||"-")),
+      h("div",{class:"meta"},c.reasoning||""),
+      ...(c.problems||[]).map(x=>h("div",{class:"err"},"✗ "+x))];
+    t.append(h("tr",null, h("td",{class:c.accepted?"":"bad"},c.id), h("td",null,c.start+"–"+c.end), h("td",null,c.boundary||""), h("td",null,c.shots), h("td",null,c.text), h("td",null,ans)));
+  });
+  body.append(t);
+  body.append(h("h3",null,"Style")); body.append(h("pre",null, d.style?JSON.stringify(d.style,null,2):"not accepted (see rejections)"));
+  body.append(h("h3",null,"Story")); body.append(h("pre",null, d.story?JSON.stringify(d.story,null,2):"not accepted (see rejections)"));
+  body.append(h("h3",null,"Judge rejections (latest run)")); body.append(h("pre",null,d.rejected_lines.join("\n")||"none"));
+  body.append(h("h3",null,"Errors")); body.append(h("pre",null,d.errors.join("\n")||"none"));
+}
+poll(); setInterval(poll, 2000);
+</script>
+</body>
+</html>

@@ -17,6 +17,7 @@ trap 'echo "[setup] FAILED at line $LINENO — see $WORKSPACE/orion_setup.log" >
 SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
 
 log "== Orion setup | profile=$MODEL_PROFILE | model=$MODEL_ID | repo=$REPO_DIR"
+phase setup_start "profile $MODEL_PROFILE"
 
 # ---- 0. hardware sanity (fail BEFORE downloading 20-60 GB) -------------------
 command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found — this pod has no GPU driver. Pick a GPU pod."
@@ -41,6 +42,7 @@ elif [ "$FREE_GB" -lt 20 ]; then
   die "Only ${FREE_GB} GB free; need at least 20 GB for inputs/outputs."
 fi
 
+phase hardware_ok "$NGPU GPU, ${TOTAL_GB} GB, ${FREE_GB} GB disk free"
 # ---- 1. system packages ------------------------------------------------------
 NEED_APT=""
 for bin in ffmpeg curl git; do command -v "$bin" >/dev/null 2>&1 || NEED_APT="$NEED_APT $bin"; done
@@ -51,6 +53,7 @@ if [ -n "$NEED_APT" ]; then
   $SUDO apt-get install -y -qq $NEED_APT unzip
 fi
 
+phase system_packages "ffmpeg, git, curl"
 # ---- 2. rclone (Google Drive) ------------------------------------------------
 if drive_needs_rclone; then
   if ! command -v rclone >/dev/null 2>&1; then
@@ -62,23 +65,29 @@ else
   log "Drive sync via rclone not configured (ORION_DRIVE_REMOTE empty or a plain folder) — skipping rclone."
 fi
 
+phase rclone "Google Drive client"
 # ---- 3. python venv + packages -----------------------------------------------
 PYV="$(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
 case "$PYV" in 3.9|3.10|3.11|3.12) ;; *) die "Python $PYV not supported by vLLM $VLLM_VERSION (need 3.9-3.12).";; esac
 [ -x "$PY" ] || { log "creating venv at $VENV"; python3 -m venv "$VENV"; }
 "$VENV/bin/pip" install -q -U pip wheel
 if ! "$PY" -c "import vllm" >/dev/null 2>&1; then
+  phase installing_vllm "several minutes"
   log "installing vllm==$VLLM_VERSION (several minutes)"
-  "$VENV/bin/pip" install "vllm==$VLLM_VERSION"
+  "$VENV/bin/pip" install -c "$REPO_DIR/deploy/constraints.txt" "vllm==$VLLM_VERSION"
 fi
 log "installing model support packages"
-"$VENV/bin/pip" install -q -U "transformers>=4.57.0,<5" accelerate qwen-omni-utils huggingface_hub rich pydantic
+"$VENV/bin/pip" install -q -U -c "$REPO_DIR/deploy/constraints.txt" "transformers>=4.57.0,<5" accelerate qwen-omni-utils huggingface_hub rich pydantic
 "$VENV/bin/pip" install -q hf_transfer || { log "hf_transfer unavailable, using normal downloads"; export HF_HUB_ENABLE_HF_TRANSFER=0; }
-"$VENV/bin/pip" install -q -r "$REPO_DIR/requirements.txt"
+"$VENV/bin/pip" install -q -c "$REPO_DIR/deploy/constraints.txt" -r "$REPO_DIR/requirements.txt"
 log "installing faster-whisper (speech-to-text, replaces the A18 agent)"
-"$VENV/bin/pip" install -q "faster-whisper>=1.1.0"
+"$VENV/bin/pip" install -q -c "$REPO_DIR/deploy/constraints.txt" "faster-whisper==1.2.1"
+# Safety net: nothing above may leave transformers at 5.x (vLLM 0.11.1 crashes with it).
+"$VENV/bin/pip" install -q -c "$REPO_DIR/deploy/constraints.txt" "transformers>=4.57.0,<5"
+phase python_packages "vllm, transformers<5, faster-whisper"
 
 # ---- 4. download the model ---------------------------------------------------
+phase model_download "$MODEL_ID (20-30 GB, first time only)"
 log "downloading $MODEL_ID to $HF_HOME (cached: instant on re-run)"
 MODEL_ID="$MODEL_ID" "$PY" - <<'PYEOF'
 import os
@@ -97,6 +106,7 @@ if ! MODEL_ID="$MODEL_ID" "$PY" -c "import os;from transformers import AutoConfi
 fi
 
 # ---- 4b. Whisper: download + test-load while the GPU is still empty ----------
+phase whisper "download + test load"
 log "downloading/loading Whisper '$ORION_WHISPER_MODEL' (CPU fallback is automatic if GPU libs are missing)"
 REPO_DIR="$REPO_DIR" "$PY" - <<'PYEOF'
 import os, sys
@@ -106,14 +116,17 @@ from pipeline import self_extract
 self_extract._load_whisper(WhisperModel)
 PYEOF
 
+phase model_server_loading "takes 4-6 minutes"
 # ---- 5. start the server -----------------------------------------------------
 bash "$REPO_DIR/deploy/start_server.sh"
 
+phase model_server_up ""
 # ---- 6. smoke test (real multimodal request: video + audio + text) ----------
 log "running multimodal smoke test"
 ORION_OMNI_MODE=live ORION_OMNI_ENDPOINT="http://127.0.0.1:$PORT/v1/chat/completions" \
   "$PY" "$REPO_DIR/deploy/smoke_test.py" || die "Smoke test failed. Read $SERVER_LOG and the error above BEFORE running a batch."
 
+phase setup_complete "smoke test passed"
 cat <<DONE
 
 ==================== SETUP COMPLETE ====================

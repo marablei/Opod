@@ -4,6 +4,7 @@ data could later feed a Control Center WebSocket instead of this table.
 """
 import csv
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -17,8 +18,10 @@ except ImportError:
 
 
 class LiveProgress:
-    def __init__(self, total_videos: int, run_dir: Path):
+    def __init__(self, total_videos: int, run_dir: Path, queue: list | None = None):
         self.total_videos = total_videos
+        self.queue = list(queue or [])
+        self.started_at = time.time()
         self.run_dir = run_dir
         self.status_path = run_dir / "_batch_status.json"
         self.completed_video_times = []  # seconds, for rolling ETA
@@ -90,6 +93,10 @@ class LiveProgress:
                 if self.completed_video_times else None
             ),
             "eta_sec_remaining": self._eta_seconds(),
+            "queue": self.queue,
+            "results": [{"video": v, "status": st, "sec": sec} for v, st, sec in self.results],
+            "pid": os.getpid(),
+            "started_at": self.started_at,
             "updated_at": time.time(),
         }
         self.status_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

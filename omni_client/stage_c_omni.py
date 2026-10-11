@@ -45,6 +45,8 @@ from omni_client.prompts import (
     build_director_prompt, build_footage_prompt,
     build_style_prompt, build_story_architect_prompt,
 )
+from omni_client import validators
+from orchestrator import events
 
 MODE = os.environ.get("ORION_OMNI_MODE", "fake")
 ENDPOINT = os.environ.get("ORION_OMNI_ENDPOINT", "http://127.0.0.1:8901/v1/chat/completions")
@@ -61,7 +63,12 @@ MAX_RETRIES = int(os.environ.get("ORION_OMNI_RETRIES", "3"))
 CLIP_FPS = float(os.environ.get("ORION_CLIP_FPS", "2"))
 CLIP_HEIGHT = int(os.environ.get("ORION_CLIP_HEIGHT", "360"))
 FRAME_HEIGHT = int(os.environ.get("ORION_FRAME_HEIGHT", "480"))
-STYLE_STORY_FRAME_COUNT = int(os.environ.get("ORION_STYLE_FRAMES", "8"))
+STYLE_STORY_FRAME_COUNT = int(os.environ.get("ORION_STYLE_FRAMES", "12"))
+# An invalid answer (see omni_client/validators.py) is sent back to the model with the reasons, this many extra times.
+VALIDATE_RETRIES = int(os.environ.get("ORION_VALIDATE_RETRIES", "2"))
+# Footage calls produce rows that Stage F holds back until the retrieval layer exists (empty candidate pool),
+# so by default they are not made at all: it halves the GPU time per video. Set to 1 once retrieval is wired in.
+FOOTAGE_CALLS = os.environ.get("ORION_FOOTAGE_CALLS", "0") == "1"
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 
@@ -182,7 +189,7 @@ def _fake_response(system_prompt: str, user_content: str) -> dict:
 def _ph(system_prompt: str, user_prompt: str) -> str:
     """Short fingerprint of the exact prompt. Part of every cache key, so changing a prompt can never
     silently reuse answers that were written for the old one."""
-    return hashlib.sha1((system_prompt + "\x00" + user_prompt).encode("utf-8")).hexdigest()[:8]
+    return hashlib.sha1((validators.VERSION + "\x00" + system_prompt + "\x00" + user_prompt).encode("utf-8")).hexdigest()[:8]
 
 
 def _parse_json_loose(text: str) -> dict:
@@ -256,6 +263,63 @@ def _live_call(system_prompt, user_content, video_clip_path, audio_path, frame_p
     raise RuntimeError(f"Qwen3-Omni call failed after {MAX_RETRIES} tries: {last_err}")
 
 
+def _feedback(user_prompt: str, problems: list[str]) -> str:
+    return (user_prompt + "\n\nYour previous answer was rejected by an automatic check for these reasons:\n- "
+            + "\n- ".join(problems) + "\nAnswer again with ONE corrected JSON object that fixes every point.")
+
+
+def _ask_validated(kind, sys_p, user_p, ctx, *, clip=None, audio=None, frames=None, label=""):
+    """Call the model; check the answer with omni_client/validators.py; if it is invalid, ask again with the
+    reasons (VALIDATE_RETRIES times). Returns (answer, problems_left). In fake mode there is no check."""
+    problems: list[str] = []
+    result = None
+    attempts = 0
+    for attempt in range(1, VALIDATE_RETRIES + 2):
+        attempts = attempt
+        t0 = time.time()
+        raw = _call_model(sys_p, _feedback(user_p, problems) if problems else user_p,
+                          video_clip_path=clip, audio_path=audio, frame_paths=frames)
+        if MODE == "fake":
+            return raw, []
+        result = validators.normalize(kind, raw, ctx)
+        problems = validators.check(kind, result, ctx)
+        events.emit("model_call", call=kind, label=label, attempt=attempt, sec=round(time.time() - t0, 1),
+                    valid=not problems, problems=problems[:4])
+        if not problems:
+            break
+    if attempts > 1:
+        result["_attempts"] = attempts      # kept in the raw file as provenance; stripped before the training rows
+    if problems:
+        result["_problems"] = problems
+    return result, problems
+
+
+class _Progress:
+    """stage_c_omni/_progress.json: real counters the dashboard reads (never estimated)."""
+
+    def __init__(self, path: Path, total: int):
+        self.path, self.d = path, {"total": total, "done": 0, "cache_hits": 0, "retried": 0, "gave_up": 0,
+                                   "current": None, "started_at": time.time()}
+        self._write()
+
+    def _write(self):
+        self.d["updated_at"] = time.time()
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.d), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def start(self, label):
+        self.d["current"] = label; self._write()
+
+    def finish(self, *, cached=False, attempts=1, gave_up=False):
+        self.d["done"] += 1
+        self.d["cache_hits"] += int(cached)
+        self.d["retried"] += int(attempts > 1)
+        self.d["gave_up"] += int(gave_up)
+        self.d["current"] = None
+        self._write()
+
+
 # --------------------------------------------------------------- checkpointing
 class _Cache:
     """One json file per finished model call. Live mode only."""
@@ -303,15 +367,18 @@ def run(video_input_dir: Path, video_out_dir: Path):
     out_dir.mkdir(parents=True, exist_ok=True)
     live = MODE == "live"
     cache = _Cache(out_dir / "_cache_live", enabled=live)
-    cache_hits = 0
+    prog = _Progress(out_dir / "_progress.json", total=len(segment_chunks) * (2 if FOOTAGE_CALLS else 1) + 2)
 
     source_video = find_source_video(video_input_dir) if live else None
     clips_dir = out_dir / "_clips"
     frames_dir = out_dir / "_frames"
     duration_sec = style_rollup.get("duration_sec") or story_input.get("duration_sec")
 
-    # Director + Footage: one call each per chunk, same clip+audio for both.
+    # Director (+ Footage only when enabled): one call per chunk, same clip+audio for both.
     director_results, footage_results = [], []
+    steps = [("director", build_director_prompt, director_results)]
+    if FOOTAGE_CALLS:
+        steps.append(("footage", build_footage_prompt, footage_results))
     for chunk in segment_chunks:
         cid = chunk["chunk_id"]
         media = {}
@@ -326,21 +393,23 @@ def run(video_input_dir: Path, video_out_dir: Path):
                 media["audio"] = wav if extract_audio(source_video, chunk["start_sec"], chunk["end_sec"], wav) else None
             return media["clip"], media["audio"]
 
-        for label, builder, bucket in (
-            ("director", build_director_prompt, director_results),
-            ("footage", build_footage_prompt, footage_results),
-        ):
-            # key includes the chunk's time range: if chunking ever changes, stale answers are NOT reused
+        for label, builder, bucket in steps:
+            # key includes the chunk's time range and the prompt fingerprint: if chunking or prompts ever change,
+            # stale answers are NOT reused
             sys_p, user_p = builder(chunk)
             key = f"{label}__{cid}__{int(chunk['start_sec'] * 1000)}_{int(chunk['end_sec'] * 1000)}__{_ph(sys_p, user_p)}"
+            tag = f"{label} {cid}"
+            prog.start(tag)
             result = cache.get(key)
             if result is not None:
-                cache_hits += 1
+                prog.finish(cached=True, gave_up=bool(result.get("_problems")))
+                events.emit("model_call_cached", call=label, label=tag)
             else:
                 clip, audio = get_media() if live else (None, None)
-                result = _call_model(sys_p, user_p, video_clip_path=clip, audio_path=audio)
+                result, problems = _ask_validated(label, sys_p, user_p, chunk, clip=clip, audio=audio, label=tag)
                 result["chunk_id"] = cid
                 cache.put(key, result)
+                prog.finish(attempts=result.get("_attempts", 1), gave_up=bool(problems))
             bucket.append(result)
 
     # Style + Story Architect: one call each, sampled frames of the whole video.
@@ -351,25 +420,23 @@ def run(video_input_dir: Path, video_out_dir: Path):
             frames.extend(sample_frames(source_video, STYLE_STORY_FRAME_COUNT, frames_dir, duration_sec))
         return frames
 
-    sys_p, user_p = build_style_prompt(style_rollup)
-    style_key = f"style__{_ph(sys_p, user_p)}"
-    style_result = cache.get(style_key)
-    if style_result is None:
-        style_result = _call_model(sys_p, user_p, frame_paths=get_frames() or None)
-        style_result["video_id"] = style_rollup["video_id"]
-        cache.put(style_key, style_result)
-    else:
-        cache_hits += 1
-
-    sys_p, user_p = build_story_architect_prompt(story_input)
-    story_key = f"story__{_ph(sys_p, user_p)}"
-    story_result = cache.get(story_key)
-    if story_result is None:
-        story_result = _call_model(sys_p, user_p, frame_paths=get_frames() or None)
-        story_result["video_id"] = story_input["video_id"]
-        cache.put(story_key, story_result)
-    else:
-        cache_hits += 1
+    singles = {}
+    for kind, builder, ctx_obj in (("style", build_style_prompt, style_rollup),
+                                   ("story", build_story_architect_prompt, story_input)):
+        sys_p, user_p = builder(ctx_obj)
+        key = f"{kind}__{_ph(sys_p, user_p)}"
+        prog.start(kind)
+        result = cache.get(key)
+        if result is not None:
+            prog.finish(cached=True, gave_up=bool(result.get("_problems")))
+            events.emit("model_call_cached", call=kind, label=kind)
+        else:
+            result, problems = _ask_validated(kind, sys_p, user_p, ctx_obj, frames=get_frames() or None, label=kind)
+            result["video_id"] = ctx_obj["video_id"]
+            cache.put(key, result)
+            prog.finish(attempts=result.get("_attempts", 1), gave_up=bool(problems))
+        singles[kind] = result
+    style_result, story_result = singles["style"], singles["story"]
 
     (out_dir / "director_raw.json").write_text(json.dumps(director_results, indent=2, ensure_ascii=False), encoding="utf-8")
     (out_dir / "footage_raw.json").write_text(json.dumps(footage_results, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -383,5 +450,7 @@ def run(video_input_dir: Path, video_out_dir: Path):
         "style_calls": 1,
         "story_calls": 1,
         "clips_extracted": live,
-        "resumed_from_cache": cache_hits,
+        "resumed_from_cache": prog.d["cache_hits"],
+        "retried": prog.d["retried"],
+        "gave_up": prog.d["gave_up"],
     }

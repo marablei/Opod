@@ -6,6 +6,8 @@ whatever request format the target endpoint (vLLM OpenAI-compatible, or a
 fake local mock) expects.
 """
 
+from omni_client.validators import VISUAL_KINDS, TREATMENTS, STYLE_KEYS, NOT_PRESENT, MAX_BEATS
+
 # Shared caveat, appended to every system prompt: the text evidence below
 # comes from automated extraction (OCR/YOLO/scene-detection/etc.) and can be
 # wrong — misread text, mislabeled objects, missed cuts. The attached video
@@ -37,15 +39,29 @@ LANGUAGE_NOTE = (
 # judge rejected both). The exact keys are stated in the prompt, for the teacher AND for the student
 # (the student must learn the same format).
 # ---------------------------------------------------------------------------
+_KINDS_HELP = (
+    "talking_head = the host/speaker on camera; broll = cutaway footage illustrating the words; "
+    "document_or_screenshot = a document, article, web page, social post or screenshot; "
+    "graphic_overlay = animated text or graphic over footage; screen_recording = recorded screen/app; map; "
+    "chart_or_data; product_closeup = a physical object in close-up (phone, package, prop); "
+    "archival_clip = news/archive footage; text_card = full-screen title/text; other"
+)
 DIRECTOR_SCHEMA = (
     ' Output ONE JSON object with exactly these keys: "chunk_id" (copy it from the input), '
-    '"editorial_function" (a short phrase: what this segment does in the story), '
-    '"treatment" (a short snake_case label such as talking_head, direct_broll, graphic_overlay, screen_recording), '
-    '"footage_need" = {"query": a visual-search phrase of at most 12 words naming the main thing to show, '
-    '"duration_sec": number}, '
-    '"audio_need" = {"query": a music/sfx search phrase of at most 12 words, or "none", "duration_sec": number, '
+    '"editorial_function" (a short phrase of at most 14 words: what this segment does in the story), '
+    f'"treatment" (one of: {", ".join(TREATMENTS)}; the dominant look of the whole chunk, "mixed" if no single kind dominates), '
+    '"visual_beats" (a list of 1 to ' + str(MAX_BEATS) + ' objects in time order, each {"start_sec", "end_sec", "kind", "what"}: '
+    'start_sec/end_sec are seconds counted from the START of this chunk (0 = first frame, chunk_duration_sec = last); '
+    f'"kind" is one of: {", ".join(VISUAL_KINDS)}; "what" is 2 to 14 words saying what is on screen. '
+    'List every visual change you see - cutaways, documents, text overlays, props, screens - and merge neighbouring cuts that show the same kind. '
+    f'Meaning of the kinds: {_KINDS_HELP}), '
+    '"footage_need" = {"query": a visual-search phrase of at most 12 words for the most important NON-host visual to source for this chunk, '
+    'or "none" if only the host is on screen, "duration_sec": total seconds of the beats that are not talking_head (0 when the query is "none")}, '
+    '"audio_need" = {"query": a music/sfx search phrase of at most 12 words, or "none", "duration_sec": the chunk duration (0 when type is "none"), '
     '"type": "music" or "sfx" or "none"}, '
-    '"reasoning" (one or two sentences saying what in the text or evidence supports this). '
+    '"reasoning" (one to three sentences saying what in the text or evidence supports this). '
+    'Rules: describe only what is clearly visible or audible - if you cannot tell, use kind "other"; never invent. '
+    'For audio_need, describe what you actually HEAR (mood, instrument or texture, tempo); use "none" when there is only speech. '
     'Queries are short search phrases, not descriptions of the whole clip, and contain no timestamps. '
     'Do not add other keys.'
 )
@@ -58,8 +74,10 @@ FOOTAGE_SCHEMA = (
 STYLE_SCHEMA = (
     ' Output ONE JSON object with exactly these six keys and no others: "pacing_target", "typography_system", '
     '"color_lut", "graphic_density", "sound_design_intensity", "map_motion_frequency". Each value is a short '
-    'English phrase (at most 12 words) describing that aspect of the channel style, based on the frames and '
-    'evidence. Do NOT report technical facts such as codec, resolution, bitrate, duration or file name.'
+    'English phrase (at most 14 words) describing that aspect of the channel style, based on the frames and '
+    'evidence. If the video does not show an aspect at all (for example it has no maps), the value must be exactly '
+    '"' + NOT_PRESENT + '" - never invent one. For pacing_target use the measured cuts_per_minute from the evidence. '
+    'Do NOT report technical facts such as codec, resolution, bitrate, duration or file name.'
 )
 STORY_SCHEMA = (
     ' Output ONE JSON object with exactly these keys: "act_1_hook", "act_1_anchor", "act_3_payoff", '
@@ -70,13 +88,14 @@ STORY_SCHEMA = (
 
 DIRECTOR_SYSTEM = (
     "You are a documentary editor. Given a video clip, a script/transcript "
-    "segment, and the channel's style config, decide the editorial "
-    "treatment for this segment. You do not pick specific footage or music "
+    "segment with timings, the detected shot cuts and the channel's style config, describe what happens "
+    "visually in this segment as a short list of visual beats, then decide the editorial "
+    "treatment. You do not pick specific footage or music "
     "assets — you don't have access to the asset library. Instead, state "
-    "what you need as a search query: footage_need (what to show, as a "
-    "short visual-search phrase, plus target duration) and audio_need "
-    "(music or SFX, mood/instrumentation/pacing as a search phrase, plus "
-    "target duration and type). A separate retrieval step will search the "
+    "what you need as a search query: footage_need (the main non-host visual, as a "
+    "short visual-search phrase) and audio_need "
+    "(music or SFX, mood/instrumentation/pacing as a search phrase). "
+    "A separate retrieval step will search the "
     "real libraries from your query later — write the query a search "
     "engine could actually use, not a vague mood word. Cite the chunk_id. "
     "Respond with valid JSON only." + LANGUAGE_NOTE + DIRECTOR_SCHEMA + EVIDENCE_CAVEAT
@@ -125,14 +144,14 @@ _STUDENT_LANGUAGE_NOTE = (
 
 STUDENT_SYSTEM = {
     "director": (
-        "You are a documentary editor. Given a script/transcript segment and automatically "
-        "extracted evidence about it (shot count, on-screen text, detected objects), decide the "
+        "You are a documentary editor. Given a script/transcript segment with timings and the "
+        "detected shot cuts, plan what is on screen as a short list of visual beats and decide the "
         "editorial treatment for this segment. You do not pick specific footage or music assets "
         "— you don't have access to the asset library. Instead, state what you need as a search "
-        "query: footage_need (what to show, as a short visual-search phrase, plus target "
-        "duration) and audio_need (music or SFX, mood/instrumentation/pacing as a search phrase, "
-        "plus target duration and type). A separate retrieval step will search the real "
-        "libraries from your query later. Cite the chunk_id. Respond with valid JSON only."
+        "query: footage_need (the main non-host visual, as a short visual-search phrase) and "
+        "audio_need (music or SFX, mood/instrumentation/pacing as a search phrase). A separate "
+        "retrieval step will search the real libraries from your query later. Cite the chunk_id. "
+        "Respond with valid JSON only."
     ),
     "footage": (
         "You are a footage researcher. Given a segment's text and a pool of retrieved candidate "
@@ -159,33 +178,39 @@ def _lang_line(code) -> list[str]:
     return [f"spoken_language: {code}"] if code else []
 
 
+def _rel(x: float, base: float) -> float:
+    return round(max(0.0, float(x) - base), 1)
+
+
 def build_director_prompt(chunk: dict) -> tuple[str, str]:
-    # NOTE: Director does NOT see candidate assets (footage or audio) at
-    # all — per the agreed design, Director's only job is to state the
-    # editorial NEED as a search query (footage_need/audio_need in its
-    # output). Actually searching real libraries for matches, across
-    # however many sources (Epidemic Sound + ~20-25 others + local), is a
-    # separate deterministic Python retrieval step that runs on Director's
-    # output — not built yet ("next part, when we actually use the LoRAs"
-    # per your call). Nothing here waits on that; this prompt and the SFT
-    # rows it produces are already complete without it.
+    """User text for one chunk. All times are RELATIVE to the chunk start (the clip the model sees starts
+    at 0 too), so the model can answer in the same clock. The same text is stored in the SFT row."""
+    # NOTE: Director does NOT see candidate assets: its only job is to state the editorial NEED as a
+    # search query (a separate deterministic retrieval step runs on that later).
     # Evidence lines are included only if that agent actually ran. Missing != zero.
-    # (Older outputs without the flag keep the old behaviour: everything included.)
     ev = chunk.get("evidence_available") or {"shots": True, "ocr": True, "objects": True}
+    base = float(chunk["start_sec"])
     lines = [
         f"chunk_id: {chunk['chunk_id']}",
-        f"start_sec: {chunk['start_sec']}  end_sec: {chunk['end_sec']}",
+        f"chunk_duration_sec: {round(float(chunk['duration_sec']), 1)}",
         *_lang_line(chunk.get("language")),
-        f"text: \"{chunk['transcript_text']}\"",
     ]
     if ev.get("shots", True):
-        lines.append(f"shots_in_chunk: {len(chunk['shots'])}")
+        cuts = [_rel(s["start_sec"], base) for s in chunk.get("shots", [])]
+        lines.append(f"shots_in_chunk: {len(cuts)}")
+        lines.append(f"shot_cuts_sec: {cuts[:40]}")
+    segs = chunk.get("transcript_segments") or []
+    if segs:
+        lines.append("transcript:")
+        for t in segs:
+            lines.append(f"  [{_rel(t['start_sec'], base)}-{_rel(t['end_sec'], base)}] \"{t['text']}\"")
+    else:
+        lines.append("transcript: (no speech in this chunk)")
     if ev.get("ocr", True):
         lines.append(f"ocr_text_regions: {[o.get('text') for o in chunk['ocr_text_regions']]}")
     if ev.get("objects", True):
         lines.append(f"objects_detected: {[o.get('label') for o in chunk['objects']]}")
-    user = "\n".join(lines)
-    return DIRECTOR_SYSTEM, user
+    return DIRECTOR_SYSTEM, "\n".join(lines)
 
 
 def build_footage_prompt(chunk: dict) -> tuple[str, str]:

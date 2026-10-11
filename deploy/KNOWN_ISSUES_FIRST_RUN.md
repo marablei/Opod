@@ -11,6 +11,20 @@ Status: the issues below were found on the FIRST real run (2026-10-11) and fixed
 | 4 | Smoke test: `✓` video+audio, then `MULTI-IMAGE REQUEST FAILED ... Connection refused`; vLLM log: `torch.OutOfMemoryError` in the vision encoder | vLLM took 90% of the card (40.6 GiB) and Whisper large-v3 holds ~3.8 GiB on the same GPU, leaving ~26 MiB for the image step | `--gpu-memory-utilization 0.80` for the `awq48` profile in `deploy/_common.sh`. (Pod-side override: `VLLM_EXTRA_ARGS="--gpu-memory-utilization 0.80"` in `/workspace/orion.env`) |
 | 5 | `Drive check failed — Cannot reach Drive`; rclone: `parsing time "..."` | The Drive token in `orion.env` was still the example placeholder (`"..."`): saving the real token had failed | Token saved from a file, not typed into a hidden prompt (see "Saving the Drive token" below) |
 
+## How each of these is now prevented (second round)
+| Problem | Guard in the repo |
+|---|---|
+| transformers 5.x breaks vLLM | `deploy/constraints.txt` applied to every pip install + a final re-pin + `doctor.py --stage post` fails if transformers >= 5 |
+| disk check on re-run | fresh-install only (done) + doctor reports free GB |
+| PyAV / audio decode | ffmpeg decode (done); faster-whisper pinned to 1.2.1 |
+| GPU memory (vLLM vs Whisper) | 0.80 (done) + doctor `--stage run` fails if < 2.5 GB GPU memory is free for Whisper |
+| bad/placeholder Drive token | `deploy/save_drive_token.py` validates + never prints; doctor checks the token JSON before any install |
+| Drive names with hidden spaces, rclone 1.58 | exact names + `--files-from-raw` (done) |
+| two pipelines at once | pgrep guard + doctor check |
+| stale cache after prompt/rule change | cache key = prompt fingerprint + validator version |
+| silent Style/Story rejection | explicit schemas, reasons logged, validators shared by Stage C and D |
+| not knowing what is running | `dashboard/server.py` + `deploy/status.py`, built only from real files |
+
 ## Saving the Drive token (reliable, copy-paste only)
 Do not put the token inside any command. Do not send screenshots that show it. Three steps, one at a time:
 1. `cat > /workspace/drive_token.txt`  → Enter (cursor waits)

@@ -1,0 +1,8 @@
+# Words Whisper often mishears: brand names, acronyms, people, places. One per line. Lines starting with # are ignored.
+# They are given to Whisper as "hotwords", which BIASES it toward these spellings (it does not force them).
+# Add terms that appear across many of your videos here. For ONE video only, put a file named glossary.txt next to that video.
+TRAI
+Jio
+Airtel
+BSNL
+Vodafone Idea

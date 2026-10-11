@@ -1,0 +1,45 @@
+{
+  "act_1_hook": {
+    "segment_id": "seg_1",
+    "function": "Establish context",
+    "note": "The speaker introduces the topic by referencing a series of previous videos on telecom companies."
+  },
+  "act_1_anchor": {
+    "segment_id": "seg_6",
+    "function": "Present the positive twist",
+    "note": "The speaker shifts the tone by introducing 'good news' and a 'big win for India', setting up the main topic."
+  },
+  "act_2_escalation": [
+    {
+      "segment_id": "seg_10",
+      "function": "Introduce the problem",
+      "note": "The speaker prepares to explain the new rules by saying, 'to understand better, I'll have to take you to this.'"
+    },
+    {
+      "segment_id": "seg_25",
+      "function": "Highlight the failure of past solutions",
+      "note": "The speaker points out that current voice-only plans are more expensive than plans with data, showing the problem is unresolved."
+    },
+    {
+      "segment_id": "seg_31",
+      "function": "Introduce the new solution",
+      "note": "The speaker announces that on September 22nd, new rules were issued that will change the situation."
+    },
+    {
+      "segment_id": "seg_35",
+      "function": "Detail the new rules",
+      "note": "The speaker lists the three key mandates from the new rules, explaining how they will solve the problem."
+    }
+  ],
+  "act_3_payoff": {
+    "segment_id": "seg_51",
+    "function": "Show the positive impact",
+    "note": "The speaker explains that the new rules will help people with feature phones and those with multiple SIMs, making a significant difference."
+  },
+  "act_3_closing": {
+    "segment_id": "seg_64",
+    "function": "Deliver the final message",
+    "note": "The speaker concludes by stating that the new rules are a 'big win for India' and thanks the audience."
+  },
+  "video_id": "V1_A BIG WIN For India! (886p_30fps_H264-128kbit_AAC-English)"
+}

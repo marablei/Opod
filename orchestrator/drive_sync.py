@@ -280,8 +280,8 @@ class DriveSync:
             else:
                 # Copy from the folder ROOT, selecting the file by exact name via --files-from-raw (no glob
                 # parsing, spaces kept). `copyto <root>:<file>` fails on rclone 1.58 with a root_folder_id.
-                ff = self.output_dir / "_pull_one.txt"
-                self.output_dir.mkdir(parents=True, exist_ok=True)
+                import tempfile  # outside the output dir, so it never gets synced to Drive
+                ff = Path(tempfile.gettempdir()) / "orion_pull_one.txt"
                 ff.write_text(name + "\n", encoding="utf-8")
                 ok = self._rclone(["copy", self.in_root, str(dst), "--files-from-raw", str(ff),
                                    "--stats", "0", "-q"]) is not None

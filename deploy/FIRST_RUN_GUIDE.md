@@ -1,5 +1,7 @@
 # Orion — First Run Guide (copy-paste version)
 
+> **Newer, shorter guide: `deploy/RUN_GUIDE.md`** (doctor, token script, live dashboard, 5 videos). This file is kept for reference.
+
 **How to use this guide:** do the steps **in order**. In every step there is a grey box with a command.
 **Copy the whole box, paste it into the terminal, press Enter.** You never have to write code.
 

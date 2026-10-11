@@ -15,6 +15,8 @@ FG=0
 if [ "${1:-}" = "--fg" ]; then FG=1; shift; fi
 [ -x "$PY" ] || die "venv missing — run deploy/setup_runpod.sh first."
 
+phase run_prepare "$*"
+bash "$REPO_DIR/deploy/start_dashboard.sh" || true
 bash "$REPO_DIR/deploy/start_server.sh"
 
 export ORION_OMNI_MODE=live
@@ -23,15 +25,12 @@ export ORION_OMNI_MODEL="$SERVED_NAME"
 export ORION_DRIVE_REMOTE="${ORION_DRIVE_REMOTE:-}"
 if ! drive_configured; then
   log "WARNING: no Drive settings — nothing will be saved to Drive. If this pod dies you lose everything. Set them in $ENV_FILE."
-else
-  log "checking Drive access + input bundles ..."
-  "$PY" "$REPO_DIR/deploy/drive_check.py" || die "Drive check failed — fix before spending GPU time."
 fi
 
-# Never run two pipelines at once: they write the same clip/state files and corrupt each other.
-if pgrep -f "orchestrator/run_pipeline.py" >/dev/null 2>&1; then
-  die "A pipeline is already running (pgrep shows it). Wait for it, or stop it first: kill \$(cat $WORKSPACE/orion_run.pid)"
-fi
+# Last gate before spending GPU time: model server answering, Drive readable+writable, no second pipeline, videos present.
+LIMIT_ARG=0; prev=""
+for a in "$@"; do [ "$prev" = "--limit" ] && LIMIT_ARG="$a"; prev="$a"; done
+python3 "$REPO_DIR/deploy/doctor.py" --stage run --limit "$LIMIT_ARG" || die "The doctor found problems (above). Fix the lines marked ✗ and run again."
 
 CMD=("$PY" "$REPO_DIR/orchestrator/run_pipeline.py" --input "$INPUT_DIR" --out "$OUTPUT_DIR" "$@")
 if [ "$FG" = 1 ]; then
@@ -39,8 +38,9 @@ if [ "$FG" = 1 ]; then
 else
   nohup "${CMD[@]}" >> "$RUN_LOG" 2>&1 &
   echo $! > "$WORKSPACE/orion_run.pid"
+  phase pipeline_started "pid $(cat "$WORKSPACE/orion_run.pid")"
   log "pipeline started in background (pid $(cat "$WORKSPACE/orion_run.pid"))"
   echo "  follow log : tail -f $RUN_LOG"
-  echo "  status     : $PY $REPO_DIR/deploy/status.py"
+  echo "  status     : $PY $REPO_DIR/deploy/status.py   (or the live dashboard link above)"
   echo "  stop       : kill \$(cat $WORKSPACE/orion_run.pid)   (safe: resumes later)"
 fi

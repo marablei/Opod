@@ -21,3 +21,4 @@ orion.env
 *.webm
 *.wav
 ttt
+_setup.jsonl

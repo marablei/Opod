@@ -123,7 +123,7 @@ if not args.fixture:
     check(not list(IN_DIR.rglob("P1_*")), "input bundle contains NO agent files")
 
 chunks = json.loads((STG_DIR / "video_001/stage_b_chunks/segment_chunks.json").read_text(encoding="utf-8"))
-per_video = 2 * len(chunks) + 2
+per_video = len(chunks) + 2   # Footage calls are off by default (rows are held back until retrieval exists)
 print(f"  ({len(chunks)} chunks -> {per_video} model calls per video)")
 
 print("\n=== phase 2: pod B, EMPTY disks, new healthy server ===")
@@ -136,8 +136,8 @@ kinds = {}
 for c in calls():
     kinds.setdefault(c["kind"], []).append(c["parts"])
 check(all(p == ["video_url", "audio_url", "text"] for p in kinds["director"]), "Director calls carried video + audio + text")
-check(all(p == ["video_url", "audio_url", "text"] for p in kinds["footage"]), "Footage calls carried video + audio + text")
-check(all(p == ["image_url"] * 8 + ["text"] for p in kinds["style"] + kinds["story"]), "Style/Story calls carried 8 frames + text")
+check("footage" not in kinds, "no Footage calls are made while retrieval is not wired in (halves GPU time)")
+check(all(p == ["image_url"] * 12 + ["text"] for p in kinds["style"] + kinds["story"]), "Style/Story calls carried 12 frames + text")
 check(not list(podB.rglob("*.tmp")), "no torn temp files")
 
 for name in ("director", "style", "footage", "story_architect"):
@@ -152,9 +152,8 @@ sysmsg = first["messages"][0]["content"].lower()
 check("video" not in sysmsg and "you have the actual" not in sysmsg, "stored training rows use the TEXT-ONLY student system prompt (no video mention)")
 check("video clip" in subprocess.run([sys.executable, "-c", "import sys;sys.path.insert(0,'.');from omni_client.prompts import DIRECTOR_SYSTEM as d;print(d)"], capture_output=True, text=True, cwd=REPO).stdout.lower(), "teacher (Omni) prompt still tells it about the video")
 foot = (SFT_DIR / "footage_sft.jsonl").read_text(encoding="utf-8").strip()
-check(foot == "", "Footage rows with an EMPTY candidate pool are held back (0 rows in footage_sft)")
-check(any("empty candidate pool" in l for l in (STG_DIR / "video_001/stage_f_final/_qa_rejections.log").read_text(encoding="utf-8").splitlines()), "...and the reason is logged")
-check(len((STG_DIR / "video_001/stage_e_sft/footage_sft.jsonl").read_text(encoding="utf-8").splitlines()) == len(chunks), "...and nothing is deleted: the pre-QA footage rows are still on Drive")
+check(foot == "", "footage_sft is empty (no Footage rows until the retrieval layer exists)")
+check(json.loads((STG_DIR / "video_001/stage_c_omni/footage_raw.json").read_text(encoding="utf-8")) == [], "footage_raw is empty on purpose (calls disabled), not missing")
 check((podB / "INPUT/video_001" / VID_NAME["video_001"]).exists(), "input videos are KEPT on the pod (nothing deleted)")
 check(((IN_DIR / "video_001.mp4") if IDS else (IN_DIR / "video_001/video.mp4")).exists(), "Drive INPUT untouched")
 

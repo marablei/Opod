@@ -12,30 +12,21 @@ made of evidence-citing claims the same way Director/Footage/Story
 Architect are — it's checked for video_id match and required-field
 presence only.
 
-Rule-based checks implemented here (Tier 3 LLM judge stays stubbed, as in
-Pipeline 1 — only wired in later for cases these rules can't resolve):
-  - Director: chunk_id must exist among this video's real chunks. Director
-    no longer references asset_ids directly — it states footage_need/
-    audio_need as search queries (no library access, by design), so there's
-    nothing to validate against a candidate pool here. Just structural
-    presence of those fields is checked.
-  - Footage: chunk_id must exist; any referenced asset_id must exist in
-    that chunk's actual candidate pool (currently always empty until the
-    Python retrieval layer is wired in — so today, any non-empty asset_ids
-    reference fails, which is correct: there ARE no real candidates yet).
-  - Story Architect: every segment_id cited must match a real transcript
-    segment id for this video.
-  - Style: video_id must match; required fields must be present.
+Rule-based checks, all in omni_client/validators.py (the same code Stage C uses to re-ask the model):
+  - Director: chunk_id exists; exact keys; treatment/beat kinds from one fixed vocabulary; beats in order, inside the
+    chunk and covering >= 60% of it; treatment consistent with the beats; footage/audio queries not generic; durations
+    computed by code; quoted words must occur in the chunk's transcript.
+  - Footage: chunk_id exists; asset ids must exist in the candidate pool (none exists yet -> any id is rejected).
+  - Story Architect: exact keys; every segment id real; acts in video order; quotes must occur in the transcript.
+  - Style: video_id matches; exactly the 6 keys; short values ("not_present" allowed); no codec/resolution facts;
+    pacing_target computed from the measured cut rate.
+Tier 3 (LLM judge) stays stubbed. NOTE: none of this sees the video, so it cannot prove a label is TRUE.
 """
 import json
-import re
 import time
 from pathlib import Path
 
-STYLE_REQUIRED_FIELDS = [
-    "pacing_target", "typography_system", "color_lut",
-    "graphic_density", "sound_design_intensity", "map_motion_frequency",
-]
+from omni_client import validators
 
 
 def _log_rejection(log_path: Path, stage: str, detail: str):
@@ -44,95 +35,64 @@ def _log_rejection(log_path: Path, stage: str, detail: str):
         f.write(f"[{stage}] {detail}\n")
 
 
-def _validate_director(entries: list[dict], valid_chunk_ids: set, log_path: Path) -> list[dict]:
+def _strip_meta(entry):
+    return {k: v for k, v in entry.items() if k not in ("_problems", "_attempts")} if isinstance(entry, dict) else entry
+
+
+def _validate_director(entries: list[dict], chunks_by_id: dict, log_path: Path) -> list[dict]:
+    """Same checks Stage C ran (omni_client/validators.py), repeated here so nothing invalid can pass
+    even if it came from an old cache or another pod."""
     validated = []
     for entry in entries:
-        chunk_id = entry.get("chunk_id")
-        if chunk_id not in valid_chunk_ids:
-            _log_rejection(log_path, "director", f"chunk_id '{chunk_id}' not found in this video's chunks — rejected")
+        chunk = chunks_by_id.get(entry.get("chunk_id"))
+        if chunk is None:
+            _log_rejection(log_path, "director", f"chunk_id '{entry.get('chunk_id')}' not found in this video's chunks — rejected")
             continue
-
-        missing = [f for f in ("footage_need", "audio_need") if f not in entry]
-        if missing:
-            _log_rejection(log_path, "director", f"chunk_id '{chunk_id}' missing required fields {missing} — rejected")
+        entry = validators.normalize_director(_strip_meta(entry), chunk)
+        problems = validators.validate_director(entry, chunk)
+        if problems:
+            _log_rejection(log_path, "director", f"{chunk['chunk_id']} rejected: " + " | ".join(problems))
             continue
-
         validated.append(entry)
     return validated
 
 
-def _validate_footage(entries: list[dict], valid_chunk_ids: set, log_path: Path) -> list[dict]:
+def _validate_footage(entries: list[dict], chunks_by_id: dict, log_path: Path) -> list[dict]:
     validated = []
     for entry in entries:
-        chunk_id = entry.get("chunk_id")
-        if chunk_id not in valid_chunk_ids:
-            _log_rejection(log_path, "footage", f"chunk_id '{chunk_id}' not found in this video's chunks — rejected")
+        chunk = chunks_by_id.get(entry.get("chunk_id"))
+        if chunk is None:
+            _log_rejection(log_path, "footage", f"chunk_id '{entry.get('chunk_id')}' not found in this video's chunks — rejected")
             continue
-
         asset_ids = entry.get("asset_ids") or entry.get("confirmed_asset_ids") or []
         if asset_ids:
-            # TODO: once the Python retrieval layer is wired in, check
-            # against that chunk's actual candidate pool instead of
-            # rejecting outright.
+            # TODO: once the Python retrieval layer is wired in, check against that chunk's actual
+            # candidate pool instead of rejecting outright.
             _log_rejection(log_path, "footage",
-                            f"chunk_id '{chunk_id}' references asset_ids {asset_ids} but no candidate "
-                            f"pool exists yet for this chunk (retrieval not wired in) — rejected")
+                           f"chunk_id '{chunk['chunk_id']}' references asset_ids {asset_ids} but no candidate "
+                           f"pool exists yet for this chunk (retrieval not wired in) — rejected")
             continue
-
-        validated.append(entry)
+        validated.append(_strip_meta(entry))
     return validated
 
 
-def _normalize_segment_id(raw) -> int | None:
-    """Transcript ids are integers (1, 2, 3 ...) and the prompt shows them as
-    'seg_1'. A real model may answer 7, "7", "seg_7" or "SEG_7"; all mean the same
-    segment. Returns the integer id, or None if it isn't a segment reference at all
-    (e.g. the 'FAKE' placeholder). Found by the mock-server simulation: without this,
-    almost every real Story Architect answer would have been rejected."""
-    if isinstance(raw, bool):
+def _validate_story_architect(story: dict, story_input: dict, log_path: Path) -> dict | None:
+    story = validators.normalize_story(_strip_meta(story), story_input)
+    problems = validators.validate_story(story, story_input)
+    if problems:
+        _log_rejection(log_path, "story_architect", "rejected: " + " | ".join(problems))
         return None
-    if isinstance(raw, int):
-        return raw
-    m = re.fullmatch(r"\s*(?:seg[_\-\s]?)?0*(\d+)\s*", str(raw), flags=re.IGNORECASE)
-    return int(m.group(1)) if m else None
-
-
-def _validate_story_architect(story: dict, valid_segment_ids: set, log_path: Path) -> dict | None:
-    all_points = []
-    for key in ("act_1_hook", "act_1_anchor", "act_3_payoff", "act_3_closing"):
-        if key in story:
-            all_points.append(story[key])
-    all_points.extend(story.get("act_2_escalation", []))
-
-    if not all_points:
-        _log_rejection(log_path, "story_architect",
-                       f"no recognizable act keys (act_1_hook, act_1_anchor, act_2_escalation, act_3_payoff, "
-                       f"act_3_closing) in the answer; keys seen: {sorted(story.keys())} — rejected")
-        return None
-
-    normalized = []
-    for point in all_points:
-        raw = point.get("segment_id") if isinstance(point, dict) else None
-        seg = _normalize_segment_id(raw)
-        if seg is None or seg not in valid_segment_ids:
-            _log_rejection(log_path, "story_architect",
-                            f"segment_id '{raw}' not found in this video's transcript — rejected")
-            return None  # any ungrounded point invalidates the whole structure, not a partial keep
-        normalized.append((point, seg))
-
-    # Store every id in the one format the prompt uses, so training targets are consistent.
-    for point, seg in normalized:
-        point["segment_id"] = f"seg_{seg}"
     return story
 
 
-def _validate_style(style: dict, expected_video_id: str, log_path: Path) -> dict | None:
+def _validate_style(style: dict, expected_video_id: str, rollup: dict, log_path: Path) -> dict | None:
     if style.get("video_id") != expected_video_id:
         _log_rejection(log_path, "style", f"video_id mismatch: got '{style.get('video_id')}' expected '{expected_video_id}'")
         return None
-    missing = [f for f in STYLE_REQUIRED_FIELDS if f not in style]
-    if missing:
-        _log_rejection(log_path, "style", f"missing required fields: {missing}")
+    style = validators.normalize_style(_strip_meta(style), rollup)
+    problems = validators.validate_style(style, rollup)
+    if problems:
+        _log_rejection(log_path, "style", "rejected: " + " | ".join(problems))
         return None
     return style
 
@@ -145,8 +105,8 @@ def run(video_input_dir: Path, video_out_dir: Path):
 
     segment_chunks = json.loads((chunks_dir / "segment_chunks.json").read_text(encoding="utf-8"))
     story_input = json.loads((chunks_dir / "story_input.json").read_text(encoding="utf-8"))
-    valid_chunk_ids = {c["chunk_id"] for c in segment_chunks}
-    valid_segment_ids = {t["id"] for t in story_input["transcript"]}
+    style_rollup = json.loads((chunks_dir / "style_rollup.json").read_text(encoding="utf-8"))
+    chunks_by_id = {c["chunk_id"]: c for c in segment_chunks}
     video_id = story_input["video_id"]
 
     out_dir = video_out_dir / "stage_d_judge"
@@ -161,10 +121,10 @@ def run(video_input_dir: Path, video_out_dir: Path):
     style_raw = json.loads((raw_dir / "style_raw.json").read_text(encoding="utf-8"))
     story_raw = json.loads((raw_dir / "story_architect_raw.json").read_text(encoding="utf-8"))
 
-    director_validated = _validate_director(director_raw, valid_chunk_ids, log_path)
-    footage_validated = _validate_footage(footage_raw, valid_chunk_ids, log_path)
-    style_validated = _validate_style(style_raw, video_id, log_path)
-    story_validated = _validate_story_architect(story_raw, valid_segment_ids, log_path)
+    director_validated = _validate_director(director_raw, chunks_by_id, log_path)
+    footage_validated = _validate_footage(footage_raw, chunks_by_id, log_path)
+    style_validated = _validate_style(style_raw, video_id, style_rollup, log_path)
+    story_validated = _validate_story_architect(story_raw, story_input, log_path)
 
     (out_dir / "director_validated.json").write_text(json.dumps(director_validated, indent=2, ensure_ascii=False), encoding="utf-8")
     (out_dir / "footage_validated.json").write_text(json.dumps(footage_validated, indent=2, ensure_ascii=False), encoding="utf-8")

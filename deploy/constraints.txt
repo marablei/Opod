@@ -1,0 +1,4 @@
+# Applied to every pip install in setup_runpod.sh (pip install -c). Keeps one package from dragging another past a
+# version that breaks the stack. Found on the first real run: an unpinned "-U transformers" pulled 5.x, and
+# vLLM 0.11.1 then crashed at startup (Qwen2Tokenizer has no attribute all_special_tokens_extended).
+transformers>=4.57.0,<5

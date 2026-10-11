@@ -42,6 +42,8 @@ MULTILINGUAL = os.environ.get("ORION_WHISPER_MULTILINGUAL", "0") == "1"
 LOW_LANG_CONFIDENCE = float(os.environ.get("ORION_LOW_LANG_CONFIDENCE", "0.80"))
 # "whisper" (default) | "none" (skip speech-to-text; chunks become fixed windows)
 TRANSCRIBE = os.environ.get("ORION_TRANSCRIBE", "whisper")
+# Words Whisper should prefer (brand names, acronyms): config/glossary.txt + an optional glossary.txt next to the video.
+GLOSSARY_FILE = Path(__file__).resolve().parent.parent / "config" / "glossary.txt"
 
 
 def find_video(video_input_dir: Path) -> Path:
@@ -120,6 +122,26 @@ def pick_language(video_input_dir: Path) -> tuple[str | None, str]:
     return None, "auto-detect"
 
 
+def _read_terms(path: Path) -> list[str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [l.strip() for l in lines if l.strip() and not l.strip().startswith("#")]
+
+
+def load_glossary(video_input_dir: Path | None = None) -> list[str]:
+    """Global terms first, then this video's own; duplicates removed, order kept."""
+    terms = _read_terms(GLOSSARY_FILE)
+    if video_input_dir is not None:
+        terms += _read_terms(Path(video_input_dir) / "glossary.txt")
+    seen, out = set(), []
+    for t in terms:
+        if t.lower() not in seen:
+            seen.add(t.lower()); out.append(t)
+    return out
+
+
 def _decode_audio_ffmpeg(video: Path):
     """16 kHz mono float32 via ffmpeg. Avoids faster-whisper's PyAV decoder, whose version must
     match exactly (a mismatch raised "open() got an unexpected keyword argument 'metadata_errors'").
@@ -136,7 +158,7 @@ def _decode_audio_ffmpeg(video: Path):
         return None
 
 
-def transcribe(video: Path, language: str | None = None) -> tuple[list[dict], dict]:
+def transcribe(video: Path, language: str | None = None, glossary: list[str] | None = None) -> tuple[list[dict], dict]:
     """Returns (segments, language_info).
     segments: [{id, start_sec, end_sec, text, words:[{word,start_sec,end_sec}]}] in the ORIGINAL spoken language.
     language_info: {"code", "probability", "multilingual"}.
@@ -163,10 +185,12 @@ def transcribe(video: Path, language: str | None = None) -> tuple[list[dict], di
         kwargs.update(language_detection_segments=4, language_detection_threshold=0.5)
     if MULTILINGUAL:
         kwargs["multilingual"] = True
+    if glossary:
+        kwargs["hotwords"] = ", ".join(glossary)
     try:
         segments, info = model.transcribe(source, **kwargs)
     except TypeError:  # older faster-whisper without those options
-        for k in ("language_detection_segments", "language_detection_threshold", "multilingual"):
+        for k in ("language_detection_segments", "language_detection_threshold", "multilingual", "hotwords"):
             kwargs.pop(k, None)
         segments, info = model.transcribe(source, **kwargs)
     out = []
@@ -218,10 +242,13 @@ def run(video_input_dir: Path, video_out_dir: Path) -> dict:
     """Returns {"source", "shots", "transcript", "pacing"}; cached on disk."""
     (video_out_dir / "stage_a_extract").mkdir(parents=True, exist_ok=True)
     cache = video_out_dir / "stage_a_extract" / "self_extract.json"
+    glossary = load_glossary(video_input_dir)
     if cache.exists():
         try:
             data = json.loads(cache.read_text(encoding="utf-8"))
-            if {"source", "shots", "transcript", "language"} <= set(data):
+            # a cached result is reused only if it was made with the same glossary (else the transcript is redone)
+            if {"source", "shots", "transcript", "language"} <= set(data) and \
+                    (data.get("settings") or {}).get("glossary") == glossary:
                 return data
         except json.JSONDecodeError:
             pass  # half-written: redo
@@ -232,7 +259,7 @@ def run(video_input_dir: Path, video_out_dir: Path) -> dict:
     shots = detect_shots(video, duration) if duration else []
     forced, lang_source = pick_language(video_input_dir)
     if source.get("has_audio", True):
-        transcript, lang = transcribe(video, forced)
+        transcript, lang = transcribe(video, forced, glossary)
     else:
         transcript, lang = [], {"code": forced, "probability": None, "multilingual": False}
     lang["source"] = lang_source
@@ -243,7 +270,8 @@ def run(video_input_dir: Path, video_out_dir: Path) -> dict:
         "transcript": transcript,
         "pacing": pacing_from_shots(shots, duration),
         "settings": {"scene_threshold": SCENE_THRESHOLD, "min_shot_sec": MIN_SHOT_SEC,
-                     "whisper_model": WHISPER_MODEL if TRANSCRIBE != "none" else None},
+                     "whisper_model": WHISPER_MODEL if TRANSCRIBE != "none" else None,
+                     "glossary": glossary},
     }
     tmp = cache.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

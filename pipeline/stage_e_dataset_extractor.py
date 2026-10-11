@@ -28,12 +28,17 @@ def _write_jsonl(path: Path, rows: list[dict]):
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def _target(obj: dict) -> dict:
+    """The training target is only what the student must produce: no bookkeeping (video_id, retry notes)."""
+    return {k: v for k, v in obj.items() if k not in ("video_id", "_problems", "_attempts")}
+
+
 def _chat_example(system: str, user: str, assistant_obj: dict) -> dict:
     return {
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
-            {"role": "assistant", "content": json.dumps(assistant_obj, ensure_ascii=False)},
+            {"role": "assistant", "content": json.dumps(_target(assistant_obj), ensure_ascii=False)},
         ]
     }
 

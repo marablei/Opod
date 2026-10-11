@@ -44,6 +44,8 @@ RUN_LOG="$WORKSPACE/orion_run.log"
 
 INPUT_DIR="${ORION_INPUT_DIR:-$WORKSPACE/INPUT}"
 OUTPUT_DIR="${ORION_OUTPUT_DIR:-$WORKSPACE/OUTPUT}"
+export ORION_OMNI_PORT="$PORT" ORION_OUTPUT_DIR="$OUTPUT_DIR" ORION_WORKSPACE="$WORKSPACE"
+DASH_PORT="${ORION_DASH_PORT:-8000}"
 
 NGPU=0
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -94,5 +96,7 @@ drive_needs_rclone() {  # true unless the "remote" is a plain folder path
   [ -n "${ORION_DRIVE_REMOTE:-}" ] && [[ "${ORION_DRIVE_REMOTE}" != /* ]] && [[ "${ORION_DRIVE_REMOTE}" != local:* ]]
 }
 log() { echo "[$(date +%H:%M:%S)] $*"; }
+# One line per setup step in $WORKSPACE/_setup.jsonl: the live dashboard shows these as they really happen.
+phase() { printf '{"t":%s,"phase":"%s","detail":"%s"}\n' "$(date +%s)" "$1" "${2:-}" >> "$WORKSPACE/_setup.jsonl" 2>/dev/null || true; }
 die() { echo "[$(date +%H:%M:%S)] ERROR: $*" >&2; exit 1; }
 server_healthy() { curl -sf -m 5 "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1; }
