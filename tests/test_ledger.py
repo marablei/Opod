@@ -24,4 +24,12 @@ assert st["CHUNK_002"]["status"] == "repaired" and any(r.startswith("beats_chang
 assert st["CHUNK_003"]["status"] == "repaired" and "audio_neutral_label" in st["CHUNK_003"]["repairs"], st["CHUNK_003"]
 assert st["CHUNK_004"]["status"] == "rejected" and len(out) == 3, st["CHUNK_004"]
 assert len(ledger) == 4 and sum(x["status"] == "rejected" for x in ledger) == 1
+# quoting on-screen text that the model was shown is grounded; quoting something nowhere in the evidence is still rejected
+c = dict(chunk("CHUNK_009", 14.0), transcript_text="so the average person scrolls fast", ocr_text_regions=[{"text": "Average Retention Span =< 47 Seconds"}])
+e = entry("CHUNK_009", [beat(0, 6, "talking_head"), beat(6, 14, "chart_or_data")])
+e["reasoning"] = 'The slide reads "Average Retention Span =< 47 Seconds" while he talks.'
+from omni_client import validators as V
+assert V.validate_director(V.normalize_director(e, c), c) == [], V.validate_director(V.normalize_director(e, c), c)
+e["reasoning"] = 'He says "internal context does not read it" here.'
+assert any("neither" in x for x in V.validate_director(V.normalize_director(e, c), c))
 print("PASS ledger")

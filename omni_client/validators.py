@@ -189,9 +189,11 @@ def validate_director(entry: dict, chunk: dict) -> list[str]:
     if not _is_str(entry["reasoning"]) or len(entry["reasoning"]) > 500:
         p.append("reasoning must be 1-3 sentences (max 500 characters)")
     else:
-        bad = ungrounded_quotes(entry["reasoning"], chunk.get("transcript_text", ""))
+        # evidence = what the model was shown for this chunk: the spoken transcript plus the on-screen text (OCR)
+        ocr = " ".join(str(o.get("text", "")) for o in (chunk.get("ocr_text_regions") or []) if isinstance(o, dict))
+        bad = ungrounded_quotes(entry["reasoning"], f"{chunk.get('transcript_text', '')} {ocr}")
         if bad:
-            p.append(f"reasoning quotes words that are not in this chunk's transcript: {bad}")
+            p.append(f"reasoning quotes words that are neither in this chunk's transcript nor in its on-screen text: {bad}")
     return p
 
 

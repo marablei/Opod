@@ -83,7 +83,7 @@ bad = json.loads(json.dumps(good)); bad["visual_beats"][1]["end_sec"] = 40
 check(has(V.validate_director(bad, chunk), "times must satisfy") and V.normalize_director(bad, chunk)["visual_beats"][1]["end_sec"] == 10.9,
       "a beat that runs past the chunk is caught raw, and clamped by normalization")
 bad = json.loads(json.dumps(good)); bad["reasoning"] = 'The host says "this will destroy every telecom company tomorrow".'
-check(has(V.validate_director(bad, chunk), "not in this chunk"), "a quote nobody said is rejected")
+check(has(V.validate_director(bad, chunk), "neither in this chunk"), "a quote nobody said is rejected")
 bad = json.loads(json.dumps(good)); bad["reasoning"] = 'The host says "it\'s not a small change".'
 check(V.validate_director(V.normalize_director(bad, chunk), chunk) == [], "a real quote from the transcript is accepted")
 bad = json.loads(json.dumps(good)); bad["footage_need"]["query"] = "none"
