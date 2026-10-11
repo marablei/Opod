@@ -48,6 +48,17 @@ STAGE_FUNCS = {
 MAX_CONSECUTIVE_FAILURES = int(os.environ.get("ORION_MAX_CONSECUTIVE_FAILURES", "3"))
 
 
+def corpus_video_ids(run_dir: Path, listed: list[str]) -> list[str]:
+    """Every video that has final rows on disk, not just the ones this run was asked to process.
+    (--only narrows what is PROCESSED; the 4 main training files must still be rebuilt from ALL finished videos.)"""
+    ids = list(listed)
+    if run_dir.exists():
+        for d in sorted(run_dir.iterdir()):
+            if d.is_dir() and not d.name.startswith("_") and (d / "stage_f_final").exists() and d.name not in ids:
+                ids.append(d.name)
+    return ids
+
+
 def discover_local_videos(videos_root: Path) -> list[str]:
     return sorted(p.name for p in videos_root.iterdir() if p.is_dir()) if videos_root.exists() else []
 
@@ -217,6 +228,7 @@ def main():
             print(f"No video subfolders found under {input_root}")
             return
 
+    all_videos = list(videos)           # the corpus is built from all of these (and any other finished video), whatever --only says
     if args.only:
         wanted = {v.strip() for v in args.only.split(",") if v.strip()}
         videos = [v for v in videos if v in wanted]
@@ -251,7 +263,7 @@ def main():
 
     events.set_video(None)
     # Stage G covers every video that has outputs (this run's AND earlier runs').
-    stage_g_aggregate.run(run_dir=run_dir, video_ids=videos)
+    stage_g_aggregate.run(run_dir=run_dir, video_ids=corpus_video_ids(run_dir, all_videos))
     progress.write_summary_csv()
     drive.push_batch_files()
     still_failing = drive.retry_failed_pushes()
