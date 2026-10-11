@@ -218,6 +218,29 @@ def salvage_audio(entry: dict, problems: list[str]) -> dict | None:
     return None
 
 
+def _cap_beats(beats, max_beats: int):
+    """More than MAX_BEATS beats: merge neighbouring beats of the SAME kind (shortest pair first) so no information about
+    what kind of visual appeared is lost - exactly what the prompt asks the model to do ("group neighbouring shots")."""
+    if not isinstance(beats, list) or len(beats) <= max_beats:
+        return beats
+    out = [dict(b) for b in beats]
+    while len(out) > max_beats:
+        best = None
+        for i in range(len(out) - 1):
+            a, b = out[i], out[i + 1]
+            if a.get("kind") == b.get("kind"):
+                span = b["end_sec"] - a["start_sec"]
+                if best is None or span < best[0]:
+                    best = (span, i)
+        if best is None:
+            return beats                                # nothing safe to merge: leave it for the validator
+        i = best[1]
+        a, b = out[i], out[i + 1]
+        words = f"{a.get('what', '')}; {b.get('what', '')}".split()
+        out[i:i + 2] = [{"start_sec": a["start_sec"], "end_sec": b["end_sec"], "kind": a["kind"], "what": " ".join(words[:14])}]
+    return out
+
+
 def _repair_overlaps(beats, dur: float, min_len: float = 0.4):
     """A cutaway shown OVER the host (host 0-14.6, chart 2.8-6.8) is a normal editing pattern, not a mistake. Rebuild it as
     ordered, non-overlapping beats: later/shorter beats are painted over earlier/longer ones, leftovers of the host become
@@ -260,7 +283,7 @@ def normalize_director(entry: dict, chunk: dict) -> dict:
     e = dict(entry)
     e["chunk_id"] = chunk["chunk_id"]
     dur = float(chunk["duration_sec"])
-    e["visual_beats"] = _repair_overlaps(e.get("visual_beats"), dur)
+    e["visual_beats"] = _cap_beats(_repair_overlaps(e.get("visual_beats"), dur), MAX_BEATS)
     beats = []
     host_free = 0.0
     for b in e.get("visual_beats") or []:

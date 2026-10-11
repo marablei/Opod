@@ -47,4 +47,15 @@ f = V.salvage_audio(e, p); assert f and not V.validate_director(f, c) and f["aud
 # but a genuinely broken answer is NOT salvaged
 en2 = entry("CHUNK_077", [beat(0, 4, "document_or_screenshot"), beat(4, 99, "talking_head")], an="upbeat background music")
 e2 = V.normalize_director(en2, c); p2 = V.validate_director(e2, c); assert V.salvage_audio(e2, p2) is None or any("too generic" not in x for x in p2) is False
+# BETRAYAL CHUNK_041: 9 beats (was REJECTED "at most 8")
+B = [beat(0,1.4,"archival_clip","Soldier holding Saudi flag"), beat(1.4,2.4,"archival_clip","Military tanks on desert road"), beat(2.4,3.2,"archival_clip","F-15 fighter jets on runway"),
+     beat(3.2,4,"archival_clip","F-35 fighter jet on aircraft carrier"), beat(4,4.6,"talking_head","Host speaking to camera"), beat(4.6,7,"archival_clip","Men in combat gear raising fists"),
+     beat(7,9.6,"archival_clip","Men with rifles on rocky hill"), beat(9.6,11.6,"archival_clip","Men on boat with machine gun"), beat(11.6,14.6,"talking_head","Host speaking to camera")]
+c = chunk("CHUNK_041", 14.6); en = entry("CHUNK_041", B, q="Saudi military parade"); e = V.normalize_director(en, c); p = V.validate_director(e, c)
+print(len(e["visual_beats"]), [(b["start_sec"], b["end_sec"], b["kind"]) for b in e["visual_beats"]]); assert len(e["visual_beats"]) <= 8 and not p, p
+assert e["visual_beats"][0]["start_sec"] == 0 and e["visual_beats"][-1]["end_sec"] == 14.6
+# BETRAYAL CHUNK_028: host over 7 cutaways
+B = [beat(0,16.6,"talking_head","Host speaking at a desk"), beat(0.5,2.3,"graphic_overlay","Map of the Red Sea"), beat(2.3,3.5,"broll","Military trucks"), beat(3.5,4.7,"archival_clip","Houthi rebels posing"),
+     beat(4.7,6.1,"broll","Damaged boats"), beat(6.1,7.5,"broll","Houthi rebels on a tank"), beat(7.5,12.3,"graphic_overlay","Map showing Houthi ships"), beat(12.3,16.6,"graphic_overlay","Map highlighting the strait")]
+c = chunk("CHUNK_028", 16.6); e = V.normalize_director(entry("CHUNK_028", B), c); p = V.validate_director(e, c); print(len(e["visual_beats"])); assert not p, p
 print("PASS repair")
