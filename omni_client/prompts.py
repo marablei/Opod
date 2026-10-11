@@ -246,8 +246,14 @@ def build_style_prompt(style_rollup: dict) -> tuple[str, str]:
 
 
 def build_story_architect_prompt(story_input: dict) -> tuple[str, str]:
+    total = story_input.get("duration_sec") or 0
+    def pct(t):          # how far into the video this line is: code does the arithmetic so the model does not have to
+        try:
+            return f" ({round(100 * float(t['start_sec']) / float(total))}% into the video)" if float(total) > 0 else ""
+        except (TypeError, ValueError, KeyError):
+            return ""
     lines = [
-        f"seg_{t['id']}: {t['start_sec']}-{t['end_sec']} | \"{t['text']}\""
+        f"seg_{t['id']}{pct(t)}: {t['start_sec']}-{t['end_sec']} | \"{t['text']}\""
         for t in story_input.get("transcript", [])
     ]
     user = (

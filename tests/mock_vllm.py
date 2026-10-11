@@ -68,7 +68,7 @@ class H(BaseHTTPRequestHandler):
             out["map_motion_frequency"] = "not_present"
         else:
             kind = "story"
-            ids = re.findall(r"seg_(\S+?):", text)
+            ids = re.findall(r"seg_(\d+)(?: \([^)]*\))?:", text)
             pt = lambda i: {"segment_id": i, "function": "f", "note": "n"}
             out = {"act_1_hook": pt(ids[0]), "act_1_anchor": pt(ids[1]), "act_2_escalation": [pt(ids[len(ids) // 2])],
                    "act_3_payoff": pt(ids[-2]), "act_3_closing": pt(ids[-1])}
