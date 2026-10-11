@@ -108,10 +108,13 @@ def video_summary(vdir: Path) -> dict:
     stages = {s: st.get(s, "pending") for s in STAGES}
     rej = _last_run_section(vdir / "stage_d_judge" / "rejected_claims.log")
     rej_counts: dict = {}
+    kept_counts: dict = {}                            # "kept" = passed, with a neutral label instead of a generic guess
     for l in rej:
         m = re.match(r"\[(\w+)\]", l)
-        if m:
-            rej_counts[m.group(1)] = rej_counts.get(m.group(1), 0) + 1
+        if not m:
+            continue
+        bucket = kept_counts if re.search(r"\bkept:", l) else rej_counts
+        bucket[m.group(1)] = bucket.get(m.group(1), 0) + 1
     director = _json(vdir / "stage_d_judge" / "director_validated.json", None)
     treat: dict = {}
     beats_total = 0
@@ -140,6 +143,7 @@ def video_summary(vdir: Path) -> dict:
                        "max": round(max(c["duration_sec"] for c in chunks), 1)} if chunks else None),
         "qa": (qa or {}).get("shards"),
         "rejected": rej_counts,
+        "kept_with_fallback": kept_counts,
         "rejected_lines": rej[-6:],
         "treatments": treat,
         "beats_per_chunk": round(beats_total / len(director), 1) if director else None,

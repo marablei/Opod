@@ -155,6 +155,8 @@ function videoCard(v){
   if (m.length) card.append(h("div",{class:"meta"}, m.map(x=>h("span",null,x))));
   if (Object.keys(v.treatments||{}).length) card.append(h("div",{class:"meta"}, "treatments: "+Object.entries(v.treatments).map(([k,c])=>k+" "+c).join(", ")));
   (v.warnings||[]).forEach(w=>card.append(h("div",{class:"warn"},"⚠ "+w)));
+  const kf = Object.entries(v.kept_with_fallback||{}).reduce((a,[k,c])=>a+c,0);
+  if (kf) card.append(h("div",{class:"meta"}, "kept, but music description replaced by a neutral label: "+kf+" chunk(s) (not rejected)"));
   const rj = Object.entries(v.rejected||{}); if (rj.length) card.append(h("div",{class:"warn"},"Judge rejected: "+rj.map(([k,c])=>k+" "+c).join(", ")));
   if (v.has_errors && !v.fully_done) card.append(h("div",{class:"err"}, v.errors_tail.slice(-3).join("\n")));
   return card;
