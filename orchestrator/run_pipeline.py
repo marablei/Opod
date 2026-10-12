@@ -48,13 +48,31 @@ STAGE_FUNCS = {
 MAX_CONSECUTIVE_FAILURES = int(os.environ.get("ORION_MAX_CONSECUTIVE_FAILURES", "3"))
 
 
-def corpus_video_ids(run_dir: Path, listed: list[str]) -> list[str]:
+def load_exclusions(path: Path | None = None) -> list[str]:
+    """config/excluded_videos.txt: one video folder name (or the start of one) per line; '#' starts a comment.
+    Excluded videos are never processed and never enter the 4 main training files. Nothing is deleted."""
+    path = path or Path(__file__).resolve().parent.parent / "config" / "excluded_videos.txt"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [l.split("#", 1)[0].strip() for l in lines if l.split("#", 1)[0].strip()]
+
+
+def is_excluded(name: str, exclusions: list[str]) -> bool:
+    return any(name == e or name.startswith(e) for e in exclusions)
+
+
+def corpus_video_ids(run_dir: Path, listed: list[str], exclusions: list[str] | None = None) -> list[str]:
     """Every video that has final rows on disk, not just the ones this run was asked to process.
-    (--only narrows what is PROCESSED; the 4 main training files must still be rebuilt from ALL finished videos.)"""
-    ids = list(listed)
+    (--only narrows what is PROCESSED; the 4 main training files must still be rebuilt from ALL finished videos.)
+    Videos named in config/excluded_videos.txt are left out."""
+    ex = load_exclusions() if exclusions is None else exclusions
+    ids = [v for v in listed if not is_excluded(v, ex)]
     if run_dir.exists():
         for d in sorted(run_dir.iterdir()):
-            if d.is_dir() and not d.name.startswith("_") and (d / "stage_f_final").exists() and d.name not in ids:
+            if d.is_dir() and not d.name.startswith("_") and (d / "stage_f_final").exists() and d.name not in ids \
+                    and not is_excluded(d.name, ex):
                 ids.append(d.name)
     return ids
 
@@ -228,6 +246,11 @@ def main():
             print(f"No video subfolders found under {input_root}")
             return
 
+    _ex = load_exclusions()
+    skipped_ex = [v for v in videos if is_excluded(v, _ex)]
+    if skipped_ex:
+        print(f"[orion] left out on purpose (config/excluded_videos.txt): {', '.join(skipped_ex)}")
+        videos = [v for v in videos if not is_excluded(v, _ex)]
     all_videos = list(videos)           # the corpus is built from all of these (and any other finished video), whatever --only says
     if args.only:
         wanted = {v.strip() for v in args.only.split(",") if v.strip()}

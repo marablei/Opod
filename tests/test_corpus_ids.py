@@ -11,9 +11,15 @@ for name, row in (("V1_legacy", '{"v":1}'), ("new_a", '{"v":2}'), ("new_b", '{"v
     (run / name / "stage_f_final" / "director_sft.jsonl").write_text(row + "\n")
 (run / "_previous_runs" / "stage_f_final").mkdir(parents=True)          # internal folders starting with _ are never videos
 (run / "failed_video").mkdir()                                            # a video that never reached Stage F has no rows: ignored
-ids = corpus_video_ids(run, ["new_a", "new_b"])                           # the run was asked for two videos only (--only)
+ids = corpus_video_ids(run, ["new_a", "new_b"], exclusions=[])                           # the run was asked for two videos only (--only)
 print(ids); assert set(ids) == {"new_a", "new_b", "V1_legacy"} and "failed_video" not in ids and "_previous_runs" not in ids
 G.run(run_dir=run, video_ids=ids)
 rows = sorted((run / "director_sft.jsonl").read_text().split())
 assert rows == ['{"v":1}', '{"v":2}', '{"v":3}'], rows
 print("PASS corpus ids")
+
+ids2 = corpus_video_ids(run, ["new_a", "new_b", "V1_legacy"], exclusions=["V1_"])
+assert set(ids2) == {"new_a", "new_b"}, ids2
+from orchestrator.run_pipeline import load_exclusions
+assert any(e.startswith("V1_A BIG WIN") for e in load_exclusions())
+print("PASS exclusions")

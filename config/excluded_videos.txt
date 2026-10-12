@@ -1,0 +1,3 @@
+# Videos that are never processed and never go into the 4 main training files (nothing is deleted).
+# One folder name, or the start of one, per line.
+V1_A BIG WIN  # old-format test video (no visual_beats)
