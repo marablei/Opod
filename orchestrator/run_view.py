@@ -217,7 +217,12 @@ def snapshot(out: Path, workspace: Path | None = None) -> dict:
     run_end = next((e for e in reversed(events) if e.get("kind") == "run_end"), None)
     running = bool(run_start) and (not run_end or run_end["t"] < run_start["t"]) and _pid_alive(batch.get("pid"))
     current = batch.get("current_video")
+    last_by_video = {}
+    for e in events:                                   # newest event per video in this run (older videos: none -> sort last)
+        if e.get("video") and e.get("t"):
+            last_by_video[e["video"]] = max(last_by_video.get(e["video"], 0), e["t"])
     for v in vids:
+        v["last_t"] = last_by_video.get(v["name"], 0)
         v["is_current"] = bool(running and v["name"] == current)
         if v["is_current"]:
             starts = [e for e in events if e.get("video") == v["name"] and e.get("kind") == "stage_start"]

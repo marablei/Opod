@@ -194,7 +194,9 @@ function render(s){
 
   const vb = $("#videos"); vb.replaceChildren();
   if (!s.videos.length) vb.append(h("div",{class:"empty"},"No video has been started yet. This page fills in as soon as the pipeline writes its first state file."));
-  [...s.videos].sort((a,b)=>(b.is_current-a.is_current)||a.name.localeCompare(b.name)).forEach(v=>vb.append(videoCard(v)));
+  // order: running one first, then unfinished ones, then finished ones; inside each group the most recent activity first,
+  // videos with no activity in this run (finished earlier) last, A-Z.
+  [...s.videos].sort((a,b)=>(b.is_current-a.is_current)||((a.fully_done?1:0)-(b.fully_done?1:0))||((b.last_t||0)-(a.last_t||0))||a.name.localeCompare(b.name)).forEach(v=>vb.append(videoCard(v)));
 
   const ph = (s.setup && s.setup.phases) || [];
   $("#setupbox").style.display = ph.length ? "" : "none";
