@@ -1,3 +1,14 @@
 # Videos that are never processed and never go into the 4 main training files (nothing is deleted).
 # One folder name, or the start of one, per line.
 V1_A BIG WIN  # old-format test video (no visual_beats)
+# --- added after batch 1 audit (2026-10-13). Exact video folder ids. ---
+1_2f3e90                                                  # Arabic speech (ar 99.9%); keep for the multilingual set
+video_04ce58                                              # Arabic title, not processed yet; multilingual set
+video_19f36d                                              # Arabic title, not processed yet; multilingual set
+video_7f765b                                              # Arabic title, not processed yet; multilingual set
+Los_combatientes_extranjeros_de_Putin_Como_Rusia_a5ee7a  # Spanish title (assumed Spanish speech, not checked); multilingual set
+Copy_of_Copy_of_AI_Just_Crossed_the_Terrifying_L_651741   # duplicate of Copy_of_AI_Just_Crossed_the_Terrifying_Line_Now_1c96fe
+Europe_12_countries_in_24_days_Cinematic_Travel_0d6a95    # identical transcript to Copy_of_Europe_12_countries_in_24_days_Cinematic_a8758d
+Germany_s_jobless_youth_DW_News_392d8d                    # duplicate of Copy_of_Germany_s_jobless_youth_DW_News_fe509e
+History_Repeats_Were_at_the_Dangerous_Part_c04bcb         # duplicate of Copy_of_History_Repeats_Were_at_the_Dangerous_Pa_9d20ed
+How_Americas_Aircraft_Carrier_Crisis_Reveals_A_M_fc18b0   # same title as the processed Copy_of_How_Americas_Aircraft_Carrier_Crisis_Rev_3b12fb (not processed)
