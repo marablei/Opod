@@ -58,6 +58,11 @@ table{border-collapse:collapse;width:100%;font-size:12px} th,td{border-bottom:1p
 th{color:var(--muted);font-weight:600}
 td.bad{color:var(--bad)} .tag{font:11px var(--mono);padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.summary{display:flex;flex-wrap:wrap;gap:10px;padding:14px 20px 0}
+.stat{flex:1 1 170px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.stat small{display:block;color:var(--muted);font-size:11px;letter-spacing:.07em;text-transform:uppercase}
+.stat b{font:700 26px var(--mono);color:var(--text)} .stat span{font:12px var(--mono);color:var(--muted);margin-left:6px}
+.stat.batch{border-color:var(--run)} .stat.batch b{color:var(--run)}
 </style>
 </head>
 <body>
@@ -73,6 +78,7 @@ td.bad{color:var(--bad)} .tag{font:11px var(--mono);padding:1px 6px;border-radiu
   <div class="kv" id="costbox" style="display:none">est. cost<b id="cost">-</b></div>
   <div class="kv" style="margin-left:auto">refreshed<b id="upd">-</b></div>
 </header>
+<div class="summary" id="summary"></div>
 <main>
   <div>
     <section><h2>Videos</h2><div id="videos"></div></section>
@@ -172,6 +178,20 @@ function videoCard(v){
   return card;
 }
 
+
+function renderSummary(s){
+  const r = s.run, sm = r.summary, box = $("#summary"); box.replaceChildren();
+  const stat = (label, big, small, cls) => h("div",{class:"stat "+(cls||"")}, h("small",{},label), h("b",{},big), small?h("span",{},small):null);
+  const q = v => (v===null||v===undefined) ? "?" : v;
+  const doneNow = s.videos.filter(v=>v.fully_done).length;
+  if (!sm){ box.append(stat("Videos on this pod", s.videos.length, doneNow+" done")); return; }
+  const finished = r.completed||0;
+  box.append(stat("Total videos", q(sm.total), "in the Drive input folder"));
+  box.append(stat("Completed before this batch", q(sm.already_done)));
+  if (sm.batch!==null) box.append(stat("This batch", sm.batch, finished+" completed · "+Math.max(0,sm.batch-finished)+" to go","batch"));
+  if (sm.left_after!==null) box.append(stat("Left after this batch", sm.left_after));
+}
+
 function render(s){
   last = s; const r = s.run, m = s.machine;
   const pill = $("#pill");
@@ -191,6 +211,7 @@ function render(s){
   $("#disk").textContent = m.disk ? m.disk.free_gb+" GB" : "-";
   if (r.cost_so_far!=null){ $("#costbox").style.display=""; $("#cost").textContent="$"+r.cost_so_far+" @ $"+r.price_per_hr+"/h"; }
   $("#upd").textContent = new Date().toLocaleTimeString();
+  renderSummary(s);
 
   const vb = $("#videos"); vb.replaceChildren();
   if (!s.videos.length) vb.append(h("div",{class:"empty"},"No video has been started yet. This page fills in as soon as the pipeline writes its first state file."));

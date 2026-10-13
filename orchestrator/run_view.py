@@ -230,6 +230,19 @@ def snapshot(out: Path, workspace: Path | None = None) -> dict:
                 v["current_stage"] = starts[-1].get("stage")
                 v["current_stage_running_sec"] = round(now - starts[-1]["t"], 1)
 
+    queue_ev = next((e for e in reversed(events) if e.get("kind") == "queue" and (not run_start or e["t"] >= run_start["t"])), None)
+    summary = None
+    if queue_ev:
+        n_batch = len(queue_ev.get("videos") or [])
+        total = queue_ev.get("total")
+        unfinished = queue_ev.get("unfinished_total")
+        summary = {"total": total, "already_done": queue_ev.get("already_done"), "batch": n_batch,
+                   "left_after": (unfinished - n_batch) if unfinished is not None else None}
+    else:                                              # an older run without these numbers: best effort from the title list
+        names = _json(out / "_video_names.json", {}) or {}
+        if names:
+            summary = {"total": len(names), "already_done": None, "batch": None, "left_after": None}
+
     rate = os.environ.get("ORION_POD_PRICE_PER_HR")
     elapsed = (now - run_start["t"]) if run_start and running else (
         (run_end["t"] - run_start["t"]) if run_start and run_end and run_end["t"] >= run_start["t"] else None)
@@ -255,6 +268,7 @@ def snapshot(out: Path, workspace: Path | None = None) -> dict:
             "args": (run_start or {}).get("args"),
             "mode": (run_start or {}).get("mode"),
             "last_event_age_sec": round(now - last_t, 1) if last_t else None,
+            "summary": summary,
             "total_videos": batch.get("total_videos"),
             "completed": batch.get("completed"),
             "current_video": current,

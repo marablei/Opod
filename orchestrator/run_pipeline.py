@@ -264,12 +264,13 @@ def main():
     # --limit counts UNFINISHED videos, so repeated runs make steady progress.
     todo = [v for v in videos if not VideoState(run_dir / v).is_fully_done()]
     already_done = len(videos) - len(todo)
+    unfinished_total = len(todo)
     if args.limit:
         todo = todo[: args.limit]
     print(f"[orion] {len(videos)} videos found: {already_done} already done, {len(todo)} to process this run")
 
     progress = LiveProgress(total_videos=len(todo), run_dir=run_dir, queue=todo)
-    events.emit("queue", videos=todo, already_done=already_done)
+    events.emit("queue", videos=todo, already_done=already_done, total=len(videos), unfinished_total=unfinished_total)
     consecutive_failures = 0
     with progress:
         for name in todo:
